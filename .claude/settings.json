@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(echo \"exit:$?\")",
+      "Bash(uv run *)",
+      "Bash(SENTINEL_DATABASE_URL=\"sqlite+aiosqlite:///$\\(pwd\\)/dev-data/_migration_scratch.db\" uv run alembic upgrade head)",
+      "Bash(SENTINEL_DATABASE_URL=\"sqlite+aiosqlite:///$\\(pwd\\)/dev-data/_migration_scratch.db\" uv run alembic revision --autogenerate -m \"create integrity tables\")",
+      "Bash(rm -f dev-data/_migration_scratch.db dev-data/_migration_scratch.db-*)",
+      "Bash(SENTINEL_DATABASE_URL=\"sqlite+aiosqlite:///$\\(pwd\\)/dev-data/_migration_verify.db\" uv run alembic upgrade head)",
+      "Bash(uv --directory /Users/Apple/sentinel-core run alembic current)"
+    ],
+    "additionalDirectories": [
+      "/Users/Apple/sentinel-core/dev-data"
+    ]
+  }
+}

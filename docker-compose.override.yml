@@ -1,0 +1,19 @@
+services:
+  api:
+    command: ["sh", "-c", "alembic upgrade head && uvicorn sentinel.bootstrap:app --host 0.0.0.0 --port 8443 --reload"]
+    environment:
+      SENTINEL_ENVIRONMENT: development
+      SENTINEL_LOG_LEVEL: DEBUG
+    volumes:
+      - sentinel-data:/data
+      - ./src:/app/src:ro
+      - ./alembic:/app/alembic:ro
+    depends_on: {}
+
+  worker:
+    environment:
+      SENTINEL_ENVIRONMENT: development
+      SENTINEL_LOG_LEVEL: DEBUG
+    volumes:
+      - sentinel-data:/data
+      - ./src:/app/src:ro

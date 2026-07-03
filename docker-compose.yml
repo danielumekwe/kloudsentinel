@@ -1,0 +1,61 @@
+services:
+  migrate:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: sentinel-core:local
+    command: ["migrate"]
+    environment:
+      SENTINEL_DATABASE_URL: sqlite+aiosqlite:////data/sentinel.db
+    volumes:
+      - sentinel-data:/data
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: sentinel-core:local
+    command: ["api"]
+    restart: unless-stopped
+    ports:
+      - "8443:8443"
+    environment:
+      SENTINEL_ENVIRONMENT: production
+      SENTINEL_LOG_LEVEL: INFO
+      SENTINEL_DATABASE_URL: sqlite+aiosqlite:////data/sentinel.db
+    volumes:
+      - sentinel-data:/data
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8443/api/v1/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: sentinel-core:local
+    command: ["worker"]
+    restart: unless-stopped
+    environment:
+      SENTINEL_ENVIRONMENT: production
+      SENTINEL_LOG_LEVEL: INFO
+      SENTINEL_DATABASE_URL: sqlite+aiosqlite:////data/sentinel.db
+    volumes:
+      - sentinel-data:/data
+      # Production host mounts (read-only) — enable on a real cPanel server:
+      # - /etc:/host/etc:ro
+      # - /home:/host/home:ro
+      # - /proc:/host/proc:ro
+      # - /var/log:/host/var/log:ro
+      # - /usr/local/cpanel:/host/usr/local/cpanel:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  sentinel-data:
