@@ -14,6 +14,29 @@ class ChangeType(StrEnum):
     PERMISSIONS_CHANGED = "PERMISSIONS_CHANGED"
 
 
+class RemediationActionType(StrEnum):
+    QUARANTINE = "QUARANTINE"
+    RESTORE = "RESTORE"
+    DELETE = "DELETE"
+
+
+class RemediationOutcome(StrEnum):
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+
+
+class RemediationState(StrEnum):
+    """An ``IntegrityFinding``'s current remediation lifecycle position.
+    ``QUARANTINED`` is the only non-terminal state reachable from ``NONE`` —
+    ``RESTORED`` and ``DELETED`` are both dead ends, reachable only from
+    ``QUARANTINED``."""
+
+    NONE = "NONE"
+    QUARANTINED = "QUARANTINED"
+    RESTORED = "RESTORED"
+    DELETED = "DELETED"
+
+
 @dataclass(frozen=True, kw_only=True)
 class ScannedFile(ValueObject):
     """Raw finding produced by a ``FileScanner`` adapter for one file under a
@@ -24,3 +47,14 @@ class ScannedFile(ValueObject):
     sha256: Sha256Hash
     size_bytes: int
     mode: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class QuarantinedFile(ValueObject):
+    """Result of a ``FileRemediator.quarantine()`` call: where the file now
+    lives, and the mode/size it had at the moment it was moved, so a later
+    restore can put it back exactly as it was."""
+
+    quarantine_path: str
+    mode: str
+    size_bytes: int

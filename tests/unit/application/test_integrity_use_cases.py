@@ -2,12 +2,31 @@ from __future__ import annotations
 
 from uuid import UUID, uuid4
 
-from sentinel.application.integrity.use_cases import RunIntegrityScanUseCase
+import pytest
+
+from sentinel.application.integrity.use_cases import (
+    DeleteFindingUseCase,
+    QuarantineFindingUseCase,
+    RestoreFindingUseCase,
+    RunIntegrityScanUseCase,
+)
 from sentinel.domain.discovery.entities import CpanelAccount
 from sentinel.domain.discovery.value_objects import LinuxUsername
-from sentinel.domain.integrity.entities import FileBaseline, IntegrityFinding
-from sentinel.domain.integrity.value_objects import ChangeType, ScannedFile
+from sentinel.domain.integrity.entities import FileBaseline, IntegrityFinding, RemediationAction
+from sentinel.domain.integrity.value_objects import (
+    ChangeType,
+    QuarantinedFile,
+    RemediationActionType,
+    RemediationOutcome,
+    RemediationState,
+    ScannedFile,
+)
 from sentinel.domain.shared.entity import utcnow
+from sentinel.domain.shared.exceptions import (
+    EntityNotFoundError,
+    FileRemediationError,
+    InvariantViolationError,
+)
 from sentinel.domain.shared.value_objects import (
     AbsoluteFilePath,
     DomainName,
@@ -105,6 +124,64 @@ class FakeFileScanner:
         return self._by_account_id.get(account.id, [])
 
 
+class FakeRemediationActionRepository:
+    def __init__(self) -> None:
+        self.by_id: dict[UUID, RemediationAction] = {}
+
+    async def add(self, entity: RemediationAction) -> None:
+        self.by_id[entity.id] = entity
+
+    async def save(self, entity: RemediationAction) -> None:
+        self.by_id[entity.id] = entity
+
+    async def get(self, entity_id: UUID) -> RemediationAction | None:
+        return self.by_id.get(entity_id)
+
+    async def list(self, *, limit: int = 50, offset: int = 0) -> list[RemediationAction]:
+        return list(self.by_id.values())[offset : offset + limit]
+
+    async def list_by_finding(self, finding_id: UUID) -> list[RemediationAction]:
+        return [a for a in self.by_id.values() if a.finding_id == finding_id]
+
+
+class FakeFileRemediator:
+    """Simulates the filesystem side of remediation. Set ``fail=True`` to
+    make every operation raise ``FileRemediationError``, mimicking a disk
+    failure, so use cases' failure-path handling can be exercised without a
+    real filesystem."""
+
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.purge_calls: list[str] = []
+
+    async def quarantine(
+        self, *, account: CpanelAccount, relative_path: RelativeFilePath
+    ) -> QuarantinedFile:
+        if self.fail:
+            raise FileRemediationError("simulated quarantine failure")
+        return QuarantinedFile(
+            quarantine_path=f"/var/sentinel/quarantine/{account.username}/{relative_path}",
+            mode="644",
+            size_bytes=100,
+        )
+
+    async def restore(
+        self,
+        *,
+        account: CpanelAccount,
+        relative_path: RelativeFilePath,
+        quarantine_path: str,
+        mode: str,
+    ) -> None:
+        if self.fail:
+            raise FileRemediationError("simulated restore failure")
+
+    async def purge(self, *, quarantine_path: str) -> None:
+        if self.fail:
+            raise FileRemediationError("simulated purge failure")
+        self.purge_calls.append(quarantine_path)
+
+
 def _account(*, is_active: bool = True) -> CpanelAccount:
     return CpanelAccount(
         server_id=uuid4(),
@@ -125,6 +202,18 @@ def _scanned_file(
         sha256=Sha256Hash(value=sha256),
         size_bytes=size_bytes,
         mode=mode,
+    )
+
+
+def _finding(account_id: UUID, *, change_type: ChangeType = ChangeType.ADDED) -> IntegrityFinding:
+    return IntegrityFinding(
+        account_id=account_id,
+        relative_path=RelativeFilePath(value="public_html/shell.php"),
+        change_type=change_type,
+        severity=Severity.MEDIUM,
+        previous_sha256=None,
+        current_sha256=Sha256Hash(value=_HASH_B),
+        detected_at=utcnow(),
     )
 
 
@@ -372,3 +461,261 @@ async def test_reappeared_file_reactivates_baseline_instead_of_duplicating() -> 
     assert str(baseline.sha256) == _HASH_B
     (finding,) = findings.by_id.values()
     assert finding.change_type == ChangeType.ADDED
+
+
+async def test_quarantine_use_case_moves_file_and_deactivates_baseline() -> None:
+    account = _account()
+    finding = _finding(account.id)
+    baseline = FileBaseline(
+        account_id=account.id,
+        relative_path=finding.relative_path,
+        sha256=Sha256Hash(value=_HASH_B),
+        size_bytes=100,
+        mode="644",
+        last_verified_at=utcnow(),
+    )
+    accounts = FakeCpanelAccountRepository([account])
+    findings = FakeIntegrityFindingRepository()
+    findings.by_id[finding.id] = finding
+    baselines = FakeFileBaselineRepository([baseline])
+    actions = FakeRemediationActionRepository()
+
+    use_case = QuarantineFindingUseCase(
+        finding_repository=findings,
+        account_repository=accounts,
+        baseline_repository=baselines,
+        action_repository=actions,
+        remediator=FakeFileRemediator(),
+    )
+
+    result = await use_case.execute(finding.id)
+
+    assert result.remediation_state == RemediationState.QUARANTINED
+    assert result.quarantine_path is not None
+    (stored_baseline,) = baselines.by_id.values()
+    assert stored_baseline.is_active is False
+    (action,) = actions.by_id.values()
+    assert action.action_type == RemediationActionType.QUARANTINE
+    assert action.outcome == RemediationOutcome.SUCCEEDED
+
+
+async def test_quarantine_use_case_rejects_deleted_change_type() -> None:
+    account = _account()
+    finding = _finding(account.id, change_type=ChangeType.DELETED)
+    accounts = FakeCpanelAccountRepository([account])
+    findings = FakeIntegrityFindingRepository()
+    findings.by_id[finding.id] = finding
+
+    use_case = QuarantineFindingUseCase(
+        finding_repository=findings,
+        account_repository=accounts,
+        baseline_repository=FakeFileBaselineRepository(),
+        action_repository=FakeRemediationActionRepository(),
+        remediator=FakeFileRemediator(),
+    )
+
+    with pytest.raises(InvariantViolationError):
+        await use_case.execute(finding.id)
+
+
+async def test_quarantine_use_case_raises_not_found_for_missing_finding() -> None:
+    use_case = QuarantineFindingUseCase(
+        finding_repository=FakeIntegrityFindingRepository(),
+        account_repository=FakeCpanelAccountRepository([]),
+        baseline_repository=FakeFileBaselineRepository(),
+        action_repository=FakeRemediationActionRepository(),
+        remediator=FakeFileRemediator(),
+    )
+
+    with pytest.raises(EntityNotFoundError):
+        await use_case.execute(uuid4())
+
+
+async def test_quarantine_use_case_raises_not_found_for_missing_account() -> None:
+    """A finding can outlive its account (e.g. deprovisioned between scan
+    and remediation) — the use case must surface that as a 404, not a
+    raw ``KeyError``/``AttributeError`` from dereferencing ``None``."""
+    finding = _finding(uuid4())
+    findings = FakeIntegrityFindingRepository()
+    findings.by_id[finding.id] = finding
+
+    use_case = QuarantineFindingUseCase(
+        finding_repository=findings,
+        account_repository=FakeCpanelAccountRepository([]),
+        baseline_repository=FakeFileBaselineRepository(),
+        action_repository=FakeRemediationActionRepository(),
+        remediator=FakeFileRemediator(),
+    )
+
+    with pytest.raises(EntityNotFoundError):
+        await use_case.execute(finding.id)
+
+
+async def test_quarantine_use_case_records_failed_action_on_remediation_error() -> None:
+    account = _account()
+    finding = _finding(account.id)
+    accounts = FakeCpanelAccountRepository([account])
+    findings = FakeIntegrityFindingRepository()
+    findings.by_id[finding.id] = finding
+    actions = FakeRemediationActionRepository()
+
+    use_case = QuarantineFindingUseCase(
+        finding_repository=findings,
+        account_repository=accounts,
+        baseline_repository=FakeFileBaselineRepository(),
+        action_repository=actions,
+        remediator=FakeFileRemediator(fail=True),
+    )
+
+    with pytest.raises(FileRemediationError):
+        await use_case.execute(finding.id)
+
+    assert finding.remediation_state == RemediationState.NONE
+    (action,) = actions.by_id.values()
+    assert action.outcome == RemediationOutcome.FAILED
+
+
+async def test_restore_use_case_records_failed_action_on_remediation_error() -> None:
+    account = _account()
+    finding = _finding(account.id)
+    finding.quarantine(quarantine_path="/quarantine/x", mode="644", size_bytes=100, at=utcnow())
+    accounts = FakeCpanelAccountRepository([account])
+    findings = FakeIntegrityFindingRepository()
+    findings.by_id[finding.id] = finding
+    actions = FakeRemediationActionRepository()
+
+    use_case = RestoreFindingUseCase(
+        finding_repository=findings,
+        account_repository=accounts,
+        baseline_repository=FakeFileBaselineRepository(),
+        action_repository=actions,
+        remediator=FakeFileRemediator(fail=True),
+    )
+
+    with pytest.raises(FileRemediationError):
+        await use_case.execute(finding.id)
+
+    assert finding.remediation_state == RemediationState.QUARANTINED
+    (action,) = actions.by_id.values()
+    assert action.action_type == RemediationActionType.RESTORE
+    assert action.outcome == RemediationOutcome.FAILED
+
+
+async def test_restore_use_case_reactivates_baseline_and_clears_quarantine() -> None:
+    account = _account()
+    finding = _finding(account.id)
+    finding.quarantine(quarantine_path="/quarantine/x", mode="644", size_bytes=100, at=utcnow())
+    baseline = FileBaseline(
+        account_id=account.id,
+        relative_path=finding.relative_path,
+        sha256=Sha256Hash(value=_HASH_B),
+        size_bytes=100,
+        mode="644",
+        last_verified_at=utcnow(),
+        is_active=False,
+    )
+    accounts = FakeCpanelAccountRepository([account])
+    findings = FakeIntegrityFindingRepository()
+    findings.by_id[finding.id] = finding
+    baselines = FakeFileBaselineRepository([baseline])
+    actions = FakeRemediationActionRepository()
+
+    use_case = RestoreFindingUseCase(
+        finding_repository=findings,
+        account_repository=accounts,
+        baseline_repository=baselines,
+        action_repository=actions,
+        remediator=FakeFileRemediator(),
+    )
+
+    result = await use_case.execute(finding.id)
+
+    assert result.remediation_state == RemediationState.RESTORED
+    assert result.quarantine_path is None
+    (stored_baseline,) = baselines.by_id.values()
+    assert stored_baseline.is_active is True
+    (action,) = actions.by_id.values()
+    assert action.action_type == RemediationActionType.RESTORE
+    assert action.outcome == RemediationOutcome.SUCCEEDED
+
+
+async def test_restore_use_case_requires_quarantined_state() -> None:
+    account = _account()
+    finding = _finding(account.id)
+    accounts = FakeCpanelAccountRepository([account])
+    findings = FakeIntegrityFindingRepository()
+    findings.by_id[finding.id] = finding
+
+    use_case = RestoreFindingUseCase(
+        finding_repository=findings,
+        account_repository=accounts,
+        baseline_repository=FakeFileBaselineRepository(),
+        action_repository=FakeRemediationActionRepository(),
+        remediator=FakeFileRemediator(),
+    )
+
+    with pytest.raises(InvariantViolationError):
+        await use_case.execute(finding.id)
+
+
+async def test_delete_use_case_records_failed_action_on_remediation_error() -> None:
+    account = _account()
+    finding = _finding(account.id)
+    finding.quarantine(quarantine_path="/quarantine/x", mode="644", size_bytes=100, at=utcnow())
+    findings = FakeIntegrityFindingRepository()
+    findings.by_id[finding.id] = finding
+    actions = FakeRemediationActionRepository()
+
+    use_case = DeleteFindingUseCase(
+        finding_repository=findings,
+        action_repository=actions,
+        remediator=FakeFileRemediator(fail=True),
+    )
+
+    with pytest.raises(FileRemediationError):
+        await use_case.execute(finding.id)
+
+    assert finding.remediation_state == RemediationState.QUARANTINED
+    (action,) = actions.by_id.values()
+    assert action.action_type == RemediationActionType.DELETE
+    assert action.outcome == RemediationOutcome.FAILED
+
+
+async def test_delete_use_case_purges_quarantined_file() -> None:
+    account = _account()
+    finding = _finding(account.id)
+    finding.quarantine(quarantine_path="/quarantine/x", mode="644", size_bytes=100, at=utcnow())
+    findings = FakeIntegrityFindingRepository()
+    findings.by_id[finding.id] = finding
+    actions = FakeRemediationActionRepository()
+    remediator = FakeFileRemediator()
+
+    use_case = DeleteFindingUseCase(
+        finding_repository=findings,
+        action_repository=actions,
+        remediator=remediator,
+    )
+
+    result = await use_case.execute(finding.id)
+
+    assert result.remediation_state == RemediationState.DELETED
+    assert remediator.purge_calls == ["/quarantine/x"]
+    (action,) = actions.by_id.values()
+    assert action.action_type == RemediationActionType.DELETE
+    assert action.outcome == RemediationOutcome.SUCCEEDED
+
+
+async def test_delete_use_case_requires_quarantined_state() -> None:
+    account = _account()
+    finding = _finding(account.id)
+    findings = FakeIntegrityFindingRepository()
+    findings.by_id[finding.id] = finding
+
+    use_case = DeleteFindingUseCase(
+        finding_repository=findings,
+        action_repository=FakeRemediationActionRepository(),
+        remediator=FakeFileRemediator(),
+    )
+
+    with pytest.raises(InvariantViolationError):
+        await use_case.execute(finding.id)

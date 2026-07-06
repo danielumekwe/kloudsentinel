@@ -6,15 +6,23 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from sentinel.api.dependencies import (
     AcknowledgeIntegrityFinding,
+    DeleteFinding,
     ListFileBaselines,
     ListIntegrityFindings,
+    ListRemediationActions,
+    QuarantineFinding,
     RequireApiKey,
+    RestoreFinding,
 )
 from sentinel.api.pagination import decode_cursor, encode_cursor
 from sentinel.api.schemas.common import Envelope, PaginatedEnvelope, PaginationInfo, ResponseMeta
-from sentinel.api.schemas.integrity import FileBaselineResponse, IntegrityFindingResponse
+from sentinel.api.schemas.integrity import (
+    FileBaselineResponse,
+    IntegrityFindingResponse,
+    RemediationActionResponse,
+)
 from sentinel.domain.shared.entity import utcnow
-from sentinel.domain.shared.exceptions import EntityNotFoundError
+from sentinel.domain.shared.exceptions import EntityNotFoundError, InvariantViolationError
 
 router = APIRouter(prefix="/integrity", tags=["integrity"])
 
@@ -93,5 +101,91 @@ async def acknowledge_finding(
 
     return Envelope(
         data=IntegrityFindingResponse.from_entity(finding),
+        meta=ResponseMeta(request_id=request.state.request_id, timestamp=utcnow()),
+    )
+
+
+@router.post(
+    "/findings/{finding_id}/quarantine",
+    response_model=Envelope[IntegrityFindingResponse],
+)
+async def quarantine_finding(
+    request: Request,
+    _: RequireApiKey,
+    finding_id: UUID,
+    use_case: QuarantineFinding,
+) -> Envelope[IntegrityFindingResponse]:
+    try:
+        finding = await use_case.execute(finding_id)
+    except EntityNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except InvariantViolationError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+    return Envelope(
+        data=IntegrityFindingResponse.from_entity(finding),
+        meta=ResponseMeta(request_id=request.state.request_id, timestamp=utcnow()),
+    )
+
+
+@router.post(
+    "/findings/{finding_id}/restore",
+    response_model=Envelope[IntegrityFindingResponse],
+)
+async def restore_finding(
+    request: Request,
+    _: RequireApiKey,
+    finding_id: UUID,
+    use_case: RestoreFinding,
+) -> Envelope[IntegrityFindingResponse]:
+    try:
+        finding = await use_case.execute(finding_id)
+    except EntityNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except InvariantViolationError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+    return Envelope(
+        data=IntegrityFindingResponse.from_entity(finding),
+        meta=ResponseMeta(request_id=request.state.request_id, timestamp=utcnow()),
+    )
+
+
+@router.post(
+    "/findings/{finding_id}/delete",
+    response_model=Envelope[IntegrityFindingResponse],
+)
+async def delete_finding(
+    request: Request,
+    _: RequireApiKey,
+    finding_id: UUID,
+    use_case: DeleteFinding,
+) -> Envelope[IntegrityFindingResponse]:
+    try:
+        finding = await use_case.execute(finding_id)
+    except EntityNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except InvariantViolationError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+    return Envelope(
+        data=IntegrityFindingResponse.from_entity(finding),
+        meta=ResponseMeta(request_id=request.state.request_id, timestamp=utcnow()),
+    )
+
+
+@router.get(
+    "/findings/{finding_id}/remediation-actions",
+    response_model=Envelope[list[RemediationActionResponse]],
+)
+async def list_remediation_actions(
+    request: Request,
+    _: RequireApiKey,
+    finding_id: UUID,
+    query: ListRemediationActions,
+) -> Envelope[list[RemediationActionResponse]]:
+    actions = await query.execute(finding_id)
+    return Envelope(
+        data=[RemediationActionResponse.from_entity(action) for action in actions],
         meta=ResponseMeta(request_id=request.state.request_id, timestamp=utcnow()),
     )

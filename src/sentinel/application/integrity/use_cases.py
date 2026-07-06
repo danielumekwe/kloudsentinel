@@ -8,14 +8,25 @@ import structlog
 
 from sentinel.domain.discovery.entities import CpanelAccount
 from sentinel.domain.discovery.ports import CpanelAccountRepository
-from sentinel.domain.integrity.entities import FileBaseline, IntegrityFinding
+from sentinel.domain.integrity.entities import FileBaseline, IntegrityFinding, RemediationAction
 from sentinel.domain.integrity.ports import (
     FileBaselineRepository,
+    FileRemediator,
     FileScanner,
     IntegrityFindingRepository,
+    RemediationActionRepository,
 )
-from sentinel.domain.integrity.value_objects import ChangeType
+from sentinel.domain.integrity.value_objects import (
+    ChangeType,
+    RemediationActionType,
+    RemediationOutcome,
+)
 from sentinel.domain.shared.entity import utcnow
+from sentinel.domain.shared.exceptions import (
+    EntityNotFoundError,
+    FileRemediationError,
+    InvariantViolationError,
+)
 from sentinel.domain.shared.value_objects import RelativeFilePath, Severity, Sha256Hash
 
 logger = structlog.get_logger()
@@ -218,3 +229,285 @@ class RunIntegrityScanUseCase:
                 detected_at=at,
             )
         )
+
+
+async def _load_finding(findings: IntegrityFindingRepository, finding_id: UUID) -> IntegrityFinding:
+    finding = await findings.get(finding_id)
+    if finding is None:
+        logger.warning(
+            "remediation_target_not_found", entity="IntegrityFinding", id=str(finding_id)
+        )
+        raise EntityNotFoundError("IntegrityFinding", finding_id)
+    return finding
+
+
+async def _load_account(accounts: CpanelAccountRepository, account_id: UUID) -> CpanelAccount:
+    account = await accounts.get(account_id)
+    if account is None:
+        logger.warning("remediation_target_not_found", entity="CpanelAccount", id=str(account_id))
+        raise EntityNotFoundError("CpanelAccount", account_id)
+    return account
+
+
+def _reject(finding: IntegrityFinding, exc: InvariantViolationError) -> None:
+    """Logs a rejected remediation attempt before re-raising.
+
+    No ``RemediationAction`` row is written here — that table is an audit
+    trail of filesystem operations that were actually attempted, and a
+    state-machine rejection never reaches the filesystem. This log line is
+    what gives operators visibility into rejected attempts (e.g. a client
+    retrying a stale request) that would otherwise leave no trace beyond an
+    HTTP 409 the caller may not be watching.
+    """
+    logger.warning(
+        "remediation_action_rejected",
+        finding_id=str(finding.id),
+        remediation_state=finding.remediation_state.value,
+        reason=str(exc),
+    )
+
+
+async def _record_remediation_action(
+    actions: RemediationActionRepository,
+    finding: IntegrityFinding,
+    *,
+    action_type: RemediationActionType,
+    outcome: RemediationOutcome,
+    detail: str | None,
+    at: datetime,
+) -> None:
+    """Writes the audit-trail row and emits a matching structured log line
+    in one place, so every remediation attempt — success or failure — is
+    both queryable via the API and visible to whatever's tailing the
+    service's logs, without each use case having to remember to do both."""
+    await actions.add(
+        RemediationAction(
+            finding_id=finding.id,
+            account_id=finding.account_id,
+            relative_path=finding.relative_path,
+            action_type=action_type,
+            outcome=outcome,
+            detail=detail,
+            performed_at=at,
+        )
+    )
+    log = logger.info if outcome is RemediationOutcome.SUCCEEDED else logger.warning
+    log(
+        "remediation_action_recorded",
+        finding_id=str(finding.id),
+        action_type=action_type.value,
+        outcome=outcome.value,
+        detail=detail,
+    )
+
+
+class QuarantineFindingUseCase:
+    """Moves the file behind an ``IntegrityFinding`` out of the account's
+    home directory into quarantine, reversibly. Also marks the finding's
+    ``FileBaseline`` row inactive — otherwise the next scheduled
+    ``RunIntegrityScanUseCase`` pass would see the path missing from disk and
+    raise a second, spurious ``DELETED`` finding for a removal Sentinel
+    itself just performed.
+    """
+
+    def __init__(
+        self,
+        *,
+        finding_repository: IntegrityFindingRepository,
+        account_repository: CpanelAccountRepository,
+        baseline_repository: FileBaselineRepository,
+        action_repository: RemediationActionRepository,
+        remediator: FileRemediator,
+    ) -> None:
+        self._findings = finding_repository
+        self._accounts = account_repository
+        self._baselines = baseline_repository
+        self._actions = action_repository
+        self._remediator = remediator
+
+    async def execute(self, finding_id: UUID) -> IntegrityFinding:
+        now = utcnow()
+        finding = await _load_finding(self._findings, finding_id)
+        account = await _load_account(self._accounts, finding.account_id)
+
+        try:
+            finding.ensure_can_quarantine()
+        except InvariantViolationError as exc:
+            _reject(finding, exc)
+            raise
+
+        try:
+            quarantined = await self._remediator.quarantine(
+                account=account, relative_path=finding.relative_path
+            )
+        except FileRemediationError as exc:
+            await _record_remediation_action(
+                self._actions,
+                finding,
+                action_type=RemediationActionType.QUARANTINE,
+                outcome=RemediationOutcome.FAILED,
+                detail=str(exc),
+                at=now,
+            )
+            raise
+
+        finding.quarantine(
+            quarantine_path=quarantined.quarantine_path,
+            mode=quarantined.mode,
+            size_bytes=quarantined.size_bytes,
+            at=now,
+        )
+        await self._findings.save(finding)
+
+        baseline = await self._baselines.get_by_account_and_path(
+            finding.account_id, finding.relative_path
+        )
+        if baseline is not None and baseline.is_active:
+            baseline.mark_removed(at=now)
+            await self._baselines.save(baseline)
+
+        await _record_remediation_action(
+            self._actions,
+            finding,
+            action_type=RemediationActionType.QUARANTINE,
+            outcome=RemediationOutcome.SUCCEEDED,
+            detail=quarantined.quarantine_path,
+            at=now,
+        )
+        return finding
+
+
+class RestoreFindingUseCase:
+    """Undoes a prior quarantine: moves the quarantined file back to its
+    original path with its original mode, and reactivates the ``FileBaseline``
+    row using the mode/hash already captured at quarantine time — the
+    restored bytes are exactly what was quarantined, so there's no need to
+    re-hash the file.
+    """
+
+    def __init__(
+        self,
+        *,
+        finding_repository: IntegrityFindingRepository,
+        account_repository: CpanelAccountRepository,
+        baseline_repository: FileBaselineRepository,
+        action_repository: RemediationActionRepository,
+        remediator: FileRemediator,
+    ) -> None:
+        self._findings = finding_repository
+        self._accounts = account_repository
+        self._baselines = baseline_repository
+        self._actions = action_repository
+        self._remediator = remediator
+
+    async def execute(self, finding_id: UUID) -> IntegrityFinding:
+        now = utcnow()
+        finding = await _load_finding(self._findings, finding_id)
+        account = await _load_account(self._accounts, finding.account_id)
+
+        try:
+            finding.ensure_can_restore()
+        except InvariantViolationError as exc:
+            _reject(finding, exc)
+            raise
+        assert finding.quarantine_path is not None
+        assert finding.quarantine_mode is not None
+
+        try:
+            await self._remediator.restore(
+                account=account,
+                relative_path=finding.relative_path,
+                quarantine_path=finding.quarantine_path,
+                mode=finding.quarantine_mode,
+            )
+        except FileRemediationError as exc:
+            await _record_remediation_action(
+                self._actions,
+                finding,
+                action_type=RemediationActionType.RESTORE,
+                outcome=RemediationOutcome.FAILED,
+                detail=str(exc),
+                at=now,
+            )
+            raise
+
+        baseline = await self._baselines.get_by_account_and_path(
+            finding.account_id, finding.relative_path
+        )
+        if baseline is not None and finding.current_sha256 is not None:
+            baseline.reactivate(
+                sha256=finding.current_sha256,
+                size_bytes=finding.quarantine_size_bytes or baseline.size_bytes,
+                mode=finding.quarantine_mode,
+                at=now,
+            )
+            await self._baselines.save(baseline)
+
+        finding.restore(at=now)
+        await self._findings.save(finding)
+
+        await _record_remediation_action(
+            self._actions,
+            finding,
+            action_type=RemediationActionType.RESTORE,
+            outcome=RemediationOutcome.SUCCEEDED,
+            detail=None,
+            at=now,
+        )
+        return finding
+
+
+class DeleteFindingUseCase:
+    """Permanently purges an already-quarantined file. The ``FileBaseline``
+    row was already marked inactive at quarantine time, so there's nothing
+    further to reconcile there — purging only ever operates on a file that's
+    already off the live filesystem.
+    """
+
+    def __init__(
+        self,
+        *,
+        finding_repository: IntegrityFindingRepository,
+        action_repository: RemediationActionRepository,
+        remediator: FileRemediator,
+    ) -> None:
+        self._findings = finding_repository
+        self._actions = action_repository
+        self._remediator = remediator
+
+    async def execute(self, finding_id: UUID) -> IntegrityFinding:
+        now = utcnow()
+        finding = await _load_finding(self._findings, finding_id)
+
+        try:
+            finding.ensure_can_delete()
+        except InvariantViolationError as exc:
+            _reject(finding, exc)
+            raise
+        assert finding.quarantine_path is not None
+
+        try:
+            await self._remediator.purge(quarantine_path=finding.quarantine_path)
+        except FileRemediationError as exc:
+            await _record_remediation_action(
+                self._actions,
+                finding,
+                action_type=RemediationActionType.DELETE,
+                outcome=RemediationOutcome.FAILED,
+                detail=str(exc),
+                at=now,
+            )
+            raise
+
+        finding.delete(at=now)
+        await self._findings.save(finding)
+
+        await _record_remediation_action(
+            self._actions,
+            finding,
+            action_type=RemediationActionType.DELETE,
+            outcome=RemediationOutcome.SUCCEEDED,
+            detail=None,
+            at=now,
+        )
+        return finding

@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sentinel.domain.integrity.entities import FileBaseline, IntegrityFinding
-from sentinel.domain.integrity.ports import FileBaselineRepository, IntegrityFindingRepository
+from sentinel.domain.integrity.entities import FileBaseline, IntegrityFinding, RemediationAction
+from sentinel.domain.integrity.ports import (
+    FileBaselineRepository,
+    IntegrityFindingRepository,
+    RemediationActionRepository,
+)
 from sentinel.domain.shared.exceptions import EntityNotFoundError
 
 
@@ -43,3 +47,11 @@ class AcknowledgeIntegrityFindingUseCase:
         finding.acknowledge()
         await self._findings.save(finding)
         return finding
+
+
+class ListRemediationActionsQuery:
+    def __init__(self, action_repository: RemediationActionRepository) -> None:
+        self._actions = action_repository
+
+    async def execute(self, finding_id: UUID) -> list[RemediationAction]:
+        return await self._actions.list_by_finding(finding_id)

@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+import pytest
+
 from sentinel.domain.integrity.entities import FileBaseline, IntegrityFinding
-from sentinel.domain.integrity.value_objects import ChangeType
+from sentinel.domain.integrity.value_objects import ChangeType, RemediationState
 from sentinel.domain.shared.entity import utcnow
+from sentinel.domain.shared.exceptions import InvariantViolationError
 from sentinel.domain.shared.value_objects import RelativeFilePath, Severity, Sha256Hash
 
 _HASH_A = "a" * 64
@@ -20,6 +23,18 @@ def _baseline(*, is_active: bool = True) -> FileBaseline:
         mode="644",
         last_verified_at=utcnow(),
         is_active=is_active,
+    )
+
+
+def _finding(*, change_type: ChangeType = ChangeType.MODIFIED) -> IntegrityFinding:
+    return IntegrityFinding(
+        account_id=uuid4(),
+        relative_path=RelativeFilePath(value="public_html/index.php"),
+        change_type=change_type,
+        severity=Severity.HIGH,
+        previous_sha256=Sha256Hash(value=_HASH_A),
+        current_sha256=Sha256Hash(value=_HASH_B),
+        detected_at=utcnow(),
     )
 
 
@@ -60,18 +75,84 @@ def test_baseline_reactivate_restores_and_updates() -> None:
 
 
 def test_finding_acknowledge_sets_flag_and_touches() -> None:
-    finding = IntegrityFinding(
-        account_id=uuid4(),
-        relative_path=RelativeFilePath(value="public_html/index.php"),
-        change_type=ChangeType.MODIFIED,
-        severity=Severity.HIGH,
-        previous_sha256=Sha256Hash(value=_HASH_A),
-        current_sha256=Sha256Hash(value=_HASH_B),
-        detected_at=utcnow(),
-    )
+    finding = _finding()
     original_updated_at = finding.updated_at
 
     finding.acknowledge()
 
     assert finding.is_acknowledged is True
     assert finding.updated_at >= original_updated_at
+
+
+def test_finding_quarantine_sets_state_and_fields() -> None:
+    finding = _finding()
+    at = utcnow()
+
+    finding.quarantine(
+        quarantine_path="/var/sentinel/quarantine/x/y", mode="644", size_bytes=10, at=at
+    )
+
+    assert finding.remediation_state is RemediationState.QUARANTINED
+    assert finding.quarantine_path == "/var/sentinel/quarantine/x/y"
+    assert finding.quarantine_mode == "644"
+    assert finding.quarantine_size_bytes == 10
+
+
+def test_finding_quarantine_rejects_deleted_change_type() -> None:
+    finding = _finding(change_type=ChangeType.DELETED)
+
+    with pytest.raises(InvariantViolationError):
+        finding.ensure_can_quarantine()
+
+
+def test_finding_quarantine_rejects_already_quarantined() -> None:
+    finding = _finding()
+    finding.quarantine(quarantine_path="/q/path", mode="644", size_bytes=10, at=utcnow())
+
+    with pytest.raises(InvariantViolationError):
+        finding.quarantine(quarantine_path="/q/path2", mode="644", size_bytes=10, at=utcnow())
+
+
+def test_finding_restore_clears_quarantine_fields() -> None:
+    finding = _finding()
+    finding.quarantine(quarantine_path="/q/path", mode="644", size_bytes=10, at=utcnow())
+
+    finding.restore(at=utcnow())
+
+    assert finding.remediation_state is RemediationState.RESTORED
+    assert finding.quarantine_path is None
+    assert finding.quarantine_mode is None
+    assert finding.quarantine_size_bytes is None
+
+
+def test_finding_restore_requires_quarantined_state() -> None:
+    finding = _finding()
+
+    with pytest.raises(InvariantViolationError):
+        finding.restore(at=utcnow())
+
+
+def test_finding_delete_clears_quarantine_fields() -> None:
+    finding = _finding()
+    finding.quarantine(quarantine_path="/q/path", mode="644", size_bytes=10, at=utcnow())
+
+    finding.delete(at=utcnow())
+
+    assert finding.remediation_state is RemediationState.DELETED
+    assert finding.quarantine_path is None
+
+
+def test_finding_delete_requires_quarantined_state() -> None:
+    finding = _finding()
+
+    with pytest.raises(InvariantViolationError):
+        finding.delete(at=utcnow())
+
+
+def test_finding_delete_rejects_after_restore() -> None:
+    finding = _finding()
+    finding.quarantine(quarantine_path="/q/path", mode="644", size_bytes=10, at=utcnow())
+    finding.restore(at=utcnow())
+
+    with pytest.raises(InvariantViolationError):
+        finding.delete(at=utcnow())

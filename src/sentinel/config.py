@@ -58,6 +58,12 @@ class Settings(BaseSettings):
     )
     integrity_max_file_size_bytes: int = 26_214_400
 
+    # Where quarantined files are moved to. Deliberately outside every
+    # account's home directory: FilesystemFileScanner only walks
+    # account.home_directory, so anything here is invisible to future scans
+    # and unreachable by the web server regardless of permissions.
+    quarantine_root_directory: str = "/var/sentinel/quarantine"
+
     event_dedup_window_minutes: int = 60
 
     cpanel_etc_directory: str = "/etc"

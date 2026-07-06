@@ -7,6 +7,7 @@ from sentinel.infrastructure.persistence.models.discovery import (
 from sentinel.infrastructure.persistence.models.integrity import (
     FileBaselineModel,
     IntegrityFindingModel,
+    RemediationActionModel,
 )
 from sentinel.infrastructure.persistence.models.inventory import (
     InstalledPluginModel,
@@ -22,6 +23,7 @@ __all__ = [
     "InstalledPluginModel",
     "InstalledThemeModel",
     "IntegrityFindingModel",
+    "RemediationActionModel",
     "ServerModel",
     "WordPressInstallationModel",
 ]

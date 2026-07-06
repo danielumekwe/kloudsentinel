@@ -18,3 +18,8 @@ class EntityNotFoundError(DomainError):
         self.entity_name = entity_name
         self.entity_id = entity_id
         super().__init__(f"{entity_name} not found: {entity_id!r}")
+
+
+class FileRemediationError(DomainError):
+    """A ``FileRemediator`` filesystem operation (quarantine/restore/purge)
+    failed — missing file, permission denied, or any other ``OSError``."""

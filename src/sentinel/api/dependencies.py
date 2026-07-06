@@ -16,12 +16,20 @@ from sentinel.application.integrity.queries import (
     AcknowledgeIntegrityFindingUseCase,
     ListFileBaselinesQuery,
     ListIntegrityFindingsQuery,
+    ListRemediationActionsQuery,
+)
+from sentinel.application.integrity.use_cases import (
+    DeleteFindingUseCase,
+    QuarantineFindingUseCase,
+    RestoreFindingUseCase,
 )
 from sentinel.application.inventory.queries import (
     ListInstalledPluginsQuery,
     ListInstalledThemesQuery,
 )
 from sentinel.application.monitoring.queries import ListConfigurationItemsQuery
+from sentinel.config import Settings
+from sentinel.infrastructure.filesystem.file_remediator import FilesystemFileRemediator
 from sentinel.infrastructure.persistence.database import Database
 from sentinel.infrastructure.persistence.models import ApiKeyModel
 from sentinel.infrastructure.persistence.repositories.discovery import (
@@ -31,6 +39,7 @@ from sentinel.infrastructure.persistence.repositories.discovery import (
 from sentinel.infrastructure.persistence.repositories.integrity import (
     SqlAlchemyFileBaselineRepository,
     SqlAlchemyIntegrityFindingRepository,
+    SqlAlchemyRemediationActionRepository,
 )
 from sentinel.infrastructure.persistence.repositories.inventory import (
     SqlAlchemyInstalledPluginRepository,
@@ -43,6 +52,13 @@ from sentinel.infrastructure.persistence.repositories.monitoring import (
 
 def get_database(request: Request) -> Database:
     return request.app.state.database
+
+
+def get_app_settings(request: Request) -> Settings:
+    return request.app.state.settings
+
+
+AppSettings = Annotated[Settings, Depends(get_app_settings)]
 
 
 async def get_db_session(
@@ -129,6 +145,56 @@ ListIntegrityFindings = Annotated[
 ]
 AcknowledgeIntegrityFinding = Annotated[
     AcknowledgeIntegrityFindingUseCase, Depends(get_acknowledge_integrity_finding_use_case)
+]
+
+
+def get_quarantine_finding_use_case(
+    session: DbSession, settings: AppSettings
+) -> QuarantineFindingUseCase:
+    return QuarantineFindingUseCase(
+        finding_repository=SqlAlchemyIntegrityFindingRepository(session),
+        account_repository=SqlAlchemyCpanelAccountRepository(session),
+        baseline_repository=SqlAlchemyFileBaselineRepository(session),
+        action_repository=SqlAlchemyRemediationActionRepository(session),
+        remediator=FilesystemFileRemediator(
+            quarantine_root_directory=settings.quarantine_root_directory
+        ),
+    )
+
+
+def get_restore_finding_use_case(
+    session: DbSession, settings: AppSettings
+) -> RestoreFindingUseCase:
+    return RestoreFindingUseCase(
+        finding_repository=SqlAlchemyIntegrityFindingRepository(session),
+        account_repository=SqlAlchemyCpanelAccountRepository(session),
+        baseline_repository=SqlAlchemyFileBaselineRepository(session),
+        action_repository=SqlAlchemyRemediationActionRepository(session),
+        remediator=FilesystemFileRemediator(
+            quarantine_root_directory=settings.quarantine_root_directory
+        ),
+    )
+
+
+def get_delete_finding_use_case(session: DbSession, settings: AppSettings) -> DeleteFindingUseCase:
+    return DeleteFindingUseCase(
+        finding_repository=SqlAlchemyIntegrityFindingRepository(session),
+        action_repository=SqlAlchemyRemediationActionRepository(session),
+        remediator=FilesystemFileRemediator(
+            quarantine_root_directory=settings.quarantine_root_directory
+        ),
+    )
+
+
+def get_list_remediation_actions_query(session: DbSession) -> ListRemediationActionsQuery:
+    return ListRemediationActionsQuery(SqlAlchemyRemediationActionRepository(session))
+
+
+QuarantineFinding = Annotated[QuarantineFindingUseCase, Depends(get_quarantine_finding_use_case)]
+RestoreFinding = Annotated[RestoreFindingUseCase, Depends(get_restore_finding_use_case)]
+DeleteFinding = Annotated[DeleteFindingUseCase, Depends(get_delete_finding_use_case)]
+ListRemediationActions = Annotated[
+    ListRemediationActionsQuery, Depends(get_list_remediation_actions_query)
 ]
 
 
