@@ -4,10 +4,17 @@ from sentinel.infrastructure.persistence.models.discovery import (
     ServerModel,
     WordPressInstallationModel,
 )
+from sentinel.infrastructure.persistence.models.events import SecurityEventModel
+from sentinel.infrastructure.persistence.models.forensics import TempFileObservationModel
 from sentinel.infrastructure.persistence.models.integrity import (
     FileBaselineModel,
     IntegrityFindingModel,
     RemediationActionModel,
+)
+from sentinel.infrastructure.persistence.models.intelligence import (
+    IncidentAccountLinkModel,
+    IncidentModel,
+    ThreatTimelineEntryModel,
 )
 from sentinel.infrastructure.persistence.models.inventory import (
     InstalledPluginModel,
@@ -20,10 +27,15 @@ __all__ = [
     "ConfigurationItemModel",
     "CpanelAccountModel",
     "FileBaselineModel",
+    "IncidentAccountLinkModel",
+    "IncidentModel",
     "InstalledPluginModel",
     "InstalledThemeModel",
     "IntegrityFindingModel",
     "RemediationActionModel",
+    "SecurityEventModel",
     "ServerModel",
+    "TempFileObservationModel",
+    "ThreatTimelineEntryModel",
     "WordPressInstallationModel",
 ]

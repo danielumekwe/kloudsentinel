@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 
-from sentinel.domain.shared.entity import BaseEntity
+from sentinel.domain.shared.entity import BaseEntity, ensure_utc
 from sentinel.domain.shared.exceptions import ValidationError
 from sentinel.domain.shared.value_objects import (
     AbsoluteFilePath,
@@ -30,6 +32,23 @@ def test_entity_touch_updates_timestamp() -> None:
     original = entity.updated_at
     entity.touch()
     assert entity.updated_at >= original
+
+
+def test_ensure_utc_attaches_tzinfo_to_naive_datetime() -> None:
+    naive = datetime(2026, 1, 1, 12, 0, 0)
+
+    result = ensure_utc(naive)
+
+    assert result.tzinfo is UTC
+    assert result.replace(tzinfo=None) == naive
+
+
+def test_ensure_utc_leaves_aware_datetime_unchanged() -> None:
+    aware = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+
+    result = ensure_utc(aware)
+
+    assert result is aware
 
 
 def test_sha256_hash_normalizes_case() -> None:

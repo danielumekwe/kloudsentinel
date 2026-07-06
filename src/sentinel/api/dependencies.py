@@ -23,6 +23,12 @@ from sentinel.application.integrity.use_cases import (
     QuarantineFindingUseCase,
     RestoreFindingUseCase,
 )
+from sentinel.application.intelligence.queries import (
+    GetIncidentQuery,
+    ListIncidentEvidenceQuery,
+    ListIncidentsQuery,
+    ListIncidentTimelineQuery,
+)
 from sentinel.application.inventory.queries import (
     ListInstalledPluginsQuery,
     ListInstalledThemesQuery,
@@ -36,10 +42,15 @@ from sentinel.infrastructure.persistence.repositories.discovery import (
     SqlAlchemyCpanelAccountRepository,
     SqlAlchemyWordPressInstallationRepository,
 )
+from sentinel.infrastructure.persistence.repositories.events import SqlAlchemyEventRepository
 from sentinel.infrastructure.persistence.repositories.integrity import (
     SqlAlchemyFileBaselineRepository,
     SqlAlchemyIntegrityFindingRepository,
     SqlAlchemyRemediationActionRepository,
+)
+from sentinel.infrastructure.persistence.repositories.intelligence import (
+    SqlAlchemyIncidentRepository,
+    SqlAlchemyThreatTimelineEntryRepository,
 )
 from sentinel.infrastructure.persistence.repositories.inventory import (
     SqlAlchemyInstalledPluginRepository,
@@ -218,4 +229,32 @@ def get_list_configuration_items_query(session: DbSession) -> ListConfigurationI
 
 ListConfigurationItems = Annotated[
     ListConfigurationItemsQuery, Depends(get_list_configuration_items_query)
+]
+
+
+def get_list_incidents_query(session: DbSession) -> ListIncidentsQuery:
+    return ListIncidentsQuery(SqlAlchemyIncidentRepository(session))
+
+
+def get_get_incident_query(session: DbSession) -> GetIncidentQuery:
+    return GetIncidentQuery(SqlAlchemyIncidentRepository(session))
+
+
+def get_list_incident_timeline_query(session: DbSession) -> ListIncidentTimelineQuery:
+    return ListIncidentTimelineQuery(SqlAlchemyThreatTimelineEntryRepository(session))
+
+
+def get_list_incident_evidence_query(session: DbSession) -> ListIncidentEvidenceQuery:
+    return ListIncidentEvidenceQuery(
+        SqlAlchemyThreatTimelineEntryRepository(session), SqlAlchemyEventRepository(session)
+    )
+
+
+ListIncidents = Annotated[ListIncidentsQuery, Depends(get_list_incidents_query)]
+GetIncident = Annotated[GetIncidentQuery, Depends(get_get_incident_query)]
+ListIncidentTimeline = Annotated[
+    ListIncidentTimelineQuery, Depends(get_list_incident_timeline_query)
+]
+ListIncidentEvidence = Annotated[
+    ListIncidentEvidenceQuery, Depends(get_list_incident_evidence_query)
 ]

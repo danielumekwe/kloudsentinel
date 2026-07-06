@@ -9,6 +9,22 @@ def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+def ensure_utc(value: datetime) -> datetime:
+    """Reattaches UTC tzinfo to a naive datetime.
+
+    Every datetime in this codebase originates from ``utcnow()`` (always
+    timezone-aware), but SQLite's plain ``DateTime`` column type strips
+    tzinfo on round-trip — the wall-clock value read back is still UTC, it's
+    just naive. That's harmless as long as datetimes are only ever assigned
+    or displayed, but comparing one freshly created (aware) against one read
+    back from the database (naive) raises ``TypeError``. Repositories that
+    need to compare timestamps (e.g. the intelligence context's correlation
+    window) should pass every datetime field through this on the way out of
+    the database.
+    """
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
 @dataclass(kw_only=True)
 class BaseEntity:
     """Identity-based equality. Two entities are equal iff same type and same id,

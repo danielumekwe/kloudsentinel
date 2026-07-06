@@ -66,6 +66,20 @@ class Settings(BaseSettings):
 
     event_dedup_window_minutes: int = 60
 
+    # Security Intelligence Engine (forensics + intelligence contexts): watches
+    # for freshly-dropped script-like files and correlates the resulting
+    # SecurityEvents into Incidents, so e.g. six unrelated-looking
+    # /tmp/update_*.php alerts are recognized as one attack instead of six.
+    forensics_temp_directories: list[str] = Field(
+        default_factory=lambda: ["/tmp", "/var/tmp", "/dev/shm"]
+    )
+    forensics_watched_extensions: list[str] = Field(
+        default_factory=lambda: [".php", ".pl", ".cgi", ".sh"]
+    )
+    forensics_scan_interval_minutes: int = 5
+    correlation_interval_minutes: int = 5
+    correlation_time_window_minutes: int = 60
+
     cpanel_etc_directory: str = "/etc"
     cpanel_home_base_directory: str = "/home"
     cpanel_suspended_directory: str = "/var/cpanel/suspended"
