@@ -17,11 +17,11 @@
       <td>{{ finding.detected_at.strftime('%Y-%m-%d %H:%M:%S UTC') }}</td>
       <td class="mono">{{ finding.quarantine_path }}</td>
       <td class="actions">
-        <form method="post" action="/dashboard/quarantine/{{ finding.id }}/restore">
+        <form method="post" action="{{ base_path }}/quarantine/{{ finding.id }}/restore">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <button type="submit" class="link-button">Restore</button>
         </form>
-        <form method="post" action="/dashboard/quarantine/{{ finding.id }}/delete"
+        <form method="post" action="{{ base_path }}/quarantine/{{ finding.id }}/delete"
               data-confirm="Permanently delete this file? This cannot be undone.">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <button type="submit" class="link-button link-button-danger">Delete permanently</button>

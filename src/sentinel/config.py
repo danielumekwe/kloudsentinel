@@ -188,6 +188,21 @@ class Settings(BaseSettings):
     # creation, not a hard cap enforced elsewhere.
     admin_session_ttl_hours: int = 12
 
+    # The path prefix rendered into every dashboard link/redirect/static
+    # asset URL. FastAPI's own routes always live under /dashboard — this
+    # only controls what the *browser* sees, so the same app works whether
+    # it's loaded directly at /dashboard or reverse-proxied by the WHM
+    # plugin's CGI script under /cgi/kloudsentinel.
+    dashboard_base_path: str = "/dashboard"
+
+    # Shared secret the WHM plugin's CGI script uses to HMAC-sign its calls
+    # to POST /dashboard/whm-session. Empty by default (no bare-metal WHM
+    # install has generated one yet); that endpoint refuses every request
+    # until this is set, since an empty secret would make the signature
+    # check meaningless. Generated once by install.sh into
+    # /etc/sentinel/whm-plugin.secret.
+    whm_plugin_shared_secret: str = ""
+
     @property
     def is_development(self) -> bool:
         return self.environment == "development"

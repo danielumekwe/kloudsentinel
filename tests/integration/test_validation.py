@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from sentinel.config import Settings
 from sentinel.infrastructure.validation import (
     check_configuration,
     check_database_connectivity,
     check_directory_readable,
     check_directory_writable,
+    check_whm_plugin_registration,
     has_critical_failures,
     has_failures,
     host_directory_checks,
@@ -96,6 +99,36 @@ async def test_check_database_connectivity_passes_for_valid_url(tmp_path: Path) 
 
     result = await check_database_connectivity(settings)
 
+    assert result.status == "PASS"
+
+
+def test_check_whm_plugin_registration_is_none_when_no_cpanel_present() -> None:
+    # Genuinely true on any non-WHM dev/CI machine — no mocking needed for
+    # the primary, "not applicable" case this check is designed to skip.
+    assert check_whm_plugin_registration() is None
+
+
+def test_check_whm_plugin_registration_warns_when_not_registered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(Path, "is_dir", lambda self: str(self) == "/usr/local/cpanel")
+    monkeypatch.setattr(Path, "is_file", lambda self: False)
+
+    result = check_whm_plugin_registration()
+
+    assert result is not None
+    assert result.status == "WARN"
+
+
+def test_check_whm_plugin_registration_passes_when_registered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(Path, "is_dir", lambda self: str(self) == "/usr/local/cpanel")
+    monkeypatch.setattr(Path, "is_file", lambda self: True)
+
+    result = check_whm_plugin_registration()
+
+    assert result is not None
     assert result.status == "PASS"
 
 

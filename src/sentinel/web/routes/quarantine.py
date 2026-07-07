@@ -69,7 +69,7 @@ async def restore_quarantined_file(
     except InvariantViolationError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
-    return RedirectResponse(url="/dashboard/quarantine", status_code=303)
+    return RedirectResponse(url=f"{settings.dashboard_base_path}/quarantine", status_code=303)
 
 
 @router.post("/{finding_id}/delete")
@@ -100,4 +100,4 @@ async def delete_quarantined_file(
     except InvariantViolationError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
-    return RedirectResponse(url="/dashboard/quarantine", status_code=303)
+    return RedirectResponse(url=f"{settings.dashboard_base_path}/quarantine", status_code=303)

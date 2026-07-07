@@ -74,6 +74,59 @@ for unit in sentinel-api sentinel-worker; do
 done
 systemctl daemon-reload
 
+if [ -d /usr/local/cpanel ]; then
+    log "WHM detected — installing the KloudSentinel WHM plugin..."
+
+    if [ ! -f /etc/sentinel/whm-plugin.secret ]; then
+        log "generating /etc/sentinel/whm-plugin.secret..."
+        openssl rand -base64 32 > /etc/sentinel/whm-plugin.secret
+        chmod 600 /etc/sentinel/whm-plugin.secret
+    fi
+    WHM_PLUGIN_SECRET="$(cat /etc/sentinel/whm-plugin.secret)"
+
+    if ! grep -q '^SENTINEL_WHM_PLUGIN_SHARED_SECRET=' /etc/sentinel/sentinel.env; then
+        log "adding SENTINEL_WHM_PLUGIN_SHARED_SECRET to /etc/sentinel/sentinel.env..."
+        echo "SENTINEL_WHM_PLUGIN_SHARED_SECRET=${WHM_PLUGIN_SECRET}" >> /etc/sentinel/sentinel.env
+    fi
+    if ! grep -q '^SENTINEL_DASHBOARD_BASE_PATH=' /etc/sentinel/sentinel.env; then
+        # Includes the CGI script name (not just the directory) — the
+        # plugin routes sub-pages via standard CGI PATH_INFO
+        # (/cgi/kloudsentinel/index.cgi/threats -> PATH_INFO=/threats), so
+        # every link Sentinel renders must be built on that full path.
+        log "adding SENTINEL_DASHBOARD_BASE_PATH to /etc/sentinel/sentinel.env..."
+        echo "SENTINEL_DASHBOARD_BASE_PATH=/cgi/kloudsentinel/index.cgi" >> /etc/sentinel/sentinel.env
+    fi
+
+    log "installing WHM plugin CGI script and icon..."
+    mkdir -p /usr/local/cpanel/whostmgr/docroot/cgi/kloudsentinel
+    cp "${SENTINEL_HOME}/whm-plugin/cgi-bin/index.cgi" \
+        /usr/local/cpanel/whostmgr/docroot/cgi/kloudsentinel/index.cgi
+    cp "${SENTINEL_HOME}/whm-plugin/kloudsentinel.png" \
+        /usr/local/cpanel/whostmgr/docroot/cgi/kloudsentinel/kloudsentinel.png
+    chown root:root /usr/local/cpanel/whostmgr/docroot/cgi/kloudsentinel/index.cgi \
+        /usr/local/cpanel/whostmgr/docroot/cgi/kloudsentinel/kloudsentinel.png
+    chmod 755 /usr/local/cpanel/whostmgr/docroot/cgi/kloudsentinel/index.cgi
+
+    log "registering the plugin with AppConfig..."
+    cp "${SENTINEL_HOME}/whm-plugin/kloudsentinel.conf" /var/cpanel/apps/kloudsentinel.conf
+    /usr/local/cpanel/bin/register_appconfig /var/cpanel/apps/kloudsentinel.conf
+
+    log "restarting cpsrvd to apply the new plugin registration..."
+    /scripts/restartsrv_cpsrvd
+
+    log "KloudSentinel WHM plugin installed — only WHM accounts with the 'kloudsentinel'"
+    log "ACL see it under Plugins (root has every ACL by default; grant it to a reseller"
+    log "via WHM > Reseller Center if needed)."
+else
+    log "no /usr/local/cpanel found — skipping WHM plugin registration (not a WHM host)."
+fi
+
+log "reloading /etc/sentinel/sentinel.env (may have just been updated above)..."
+set -a
+# shellcheck disable=SC1091
+source /etc/sentinel/sentinel.env
+set +a
+
 log "running pre-flight checks (sentinel doctor)..."
 if ! "${SENTINEL_HOME}/.venv/bin/sentinel" doctor; then
     die "sentinel doctor reported a FAIL above — fix the configuration and re-run this script before starting services. Services were NOT enabled/started."
@@ -99,6 +152,11 @@ Next steps (in that shell):
        ${SENTINEL_HOME}/.venv/bin/sentinel health
   3. Follow logs:
        journalctl -u sentinel-api -u sentinel-worker -f
+
+sentinel-api listens on 127.0.0.1:8443 only — it is never reachable from
+outside this host. On a WHM host, open WHM > Plugins > KloudSentinel (only
+visible to WHM accounts with the 'kloudsentinel' ACL); that plugin is the
+only intended access path. There is no separate dashboard login to create.
 
 See docs/deployment/bare-metal-almalinux.md for upgrade, rollback, and
 backup procedures.

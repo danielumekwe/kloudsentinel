@@ -3,7 +3,7 @@
 {% block content %}
 <div class="page-header">
   <h1>Dashboard</h1>
-  <form method="post" action="/dashboard/scans/run">
+  <form method="post" action="{{ base_path }}/scans/run">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <button type="submit" class="primary">Run Scan Now</button>
   </form>

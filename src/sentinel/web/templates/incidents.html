@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Incidents — KloudSentinel{% endblock %}
+{% block content %}
+<h1>Incidents</h1>
+
+<table class="data-table">
+  <thead>
+    <tr>
+      <th>Title</th><th>Status</th><th>Severity</th><th>Confidence</th><th>First seen</th><th>Last seen</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for incident in incidents %}
+    <tr>
+      <td><a href="{{ base_path }}/incidents/{{ incident.id }}">{{ incident.title }}</a></td>
+      <td><span class="badge">{{ incident.status.value }}</span></td>
+      <td><span class="badge badge-severity-{{ incident.severity.value|lower }}">{{ incident.severity.value }}</span></td>
+      <td>{{ '%.0f'|format(incident.confidence * 100) }}%</td>
+      <td>{{ incident.first_seen_at.strftime('%Y-%m-%d %H:%M:%S UTC') }}</td>
+      <td>{{ incident.last_seen_at.strftime('%Y-%m-%d %H:%M:%S UTC') }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6" class="empty">No incidents recorded yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

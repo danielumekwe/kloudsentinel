@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}{{ incident.title }} — KloudSentinel{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>{{ incident.title }}</h1>
+  <a href="{{ base_path }}/incidents">Back to incidents</a>
+</div>
+
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-value">{{ incident.status.value }}</div>
+    <div class="stat-label">Status</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value">{{ incident.severity.value }}</div>
+    <div class="stat-label">Severity</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value">{{ '%.0f'|format(incident.confidence * 100) }}%</div>
+    <div class="stat-label">Confidence</div>
+  </div>
+</div>
+
+{% if incident.root_cause %}
+<section>
+  <h2>Root cause</h2>
+  <p>{{ incident.root_cause }}</p>
+  {% if incident.recommended_actions %}
+  <p><strong>Recommended actions:</strong> {{ incident.recommended_actions }}</p>
+  {% endif %}
+</section>
+{% endif %}
+
+<section>
+  <h2>Timeline</h2>
+  <table class="data-table">
+    <thead>
+      <tr><th>Stage</th><th>Description</th><th>Occurred</th></tr>
+    </thead>
+    <tbody>
+      {% for entry in timeline %}
+      <tr>
+        <td>{{ entry.stage }}</td>
+        <td>{{ entry.description }}</td>
+        <td>{{ entry.occurred_at.strftime('%Y-%m-%d %H:%M:%S UTC') }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="3" class="empty">No timeline entries.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>Evidence</h2>
+  <table class="data-table">
+    <thead>
+      <tr><th>Type</th><th>Severity</th><th>Occurred</th><th>Path</th></tr>
+    </thead>
+    <tbody>
+      {% for event in evidence %}
+      <tr>
+        <td>{{ event.event_type }}</td>
+        <td><span class="badge badge-severity-{{ event.severity.value|lower }}">{{ event.severity.value }}</span></td>
+        <td>{{ event.occurred_at.strftime('%Y-%m-%d %H:%M:%S UTC') }}</td>
+        <td>{{ event.file_path or '—' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4" class="empty">No evidence recorded.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

@@ -16,7 +16,7 @@ from sentinel.api.v1.router import api_router
 from sentinel.config import Settings, get_settings
 from sentinel.infrastructure.persistence.database import Database
 from sentinel.infrastructure.validation import has_critical_failures, run_all_checks
-from sentinel.web.dependencies import RedirectToLogin
+from sentinel.web.dependencies import RedirectToLogin, templates
 from sentinel.web.router import web_router
 
 
@@ -105,10 +105,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     static_dir = Path(__file__).parent / "web" / "static"
     app.mount("/dashboard/static", StaticFiles(directory=str(static_dir)), name="dashboard-static")
 
+    # Every dashboard template renders links via {{ base_path }} instead of
+    # a hardcoded "/dashboard" so the same HTML works whether the browser
+    # loaded it directly or through the WHM plugin's CGI reverse proxy
+    # (which rewrites its own mount prefix to /dashboard on the way in, but
+    # the *rendered* links need to point back at whatever prefix the
+    # browser actually used).
+    templates.env.globals["base_path"] = settings.dashboard_base_path
+
     @app.exception_handler(RedirectToLogin)
     async def _redirect_to_login(request: Request, exc: RedirectToLogin) -> RedirectResponse:
         del request, exc
-        return RedirectResponse(url="/dashboard/login", status_code=303)
+        return RedirectResponse(url=f"{settings.dashboard_base_path}/login", status_code=303)
 
     return app
 

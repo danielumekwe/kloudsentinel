@@ -66,6 +66,35 @@ def check_configuration(settings: Settings) -> CheckResult:
     return CheckResult(name="configuration", status="PASS", detail="no conflicting paths")
 
 
+def check_whm_plugin_registration() -> CheckResult | None:
+    """Best-effort only: on a non-WHM host (no /usr/local/cpanel) this
+    check doesn't apply at all and is skipped entirely, rather than
+    WARNing on every dev machine and generic AlmaLinux install. On a WHM
+    host, this catches the plugin having been silently unregistered
+    (e.g. an AppConfig entry removed by hand) without blocking startup —
+    the internal-only API/worker are fully functional either way; only the
+    WHM UI would be unreachable.
+    """
+    if not Path("/usr/local/cpanel").is_dir():
+        return None
+
+    conf_path = Path("/var/cpanel/apps/kloudsentinel.conf")
+    cgi_path = Path("/usr/local/cpanel/whostmgr/docroot/cgi/kloudsentinel/index.cgi")
+    if not conf_path.is_file():
+        return CheckResult(
+            name="whm_plugin",
+            status="WARN",
+            detail=f"{conf_path} is missing — WHM plugin is not registered (re-run install.sh)",
+        )
+    if not cgi_path.is_file():
+        return CheckResult(
+            name="whm_plugin",
+            status="WARN",
+            detail=f"{cgi_path} is missing — WHM plugin CGI script not installed (re-run install.sh)",
+        )
+    return CheckResult(name="whm_plugin", status="PASS", detail="registered")
+
+
 async def check_database_connectivity(settings: Settings) -> CheckResult:
     database = Database(settings)
     try:
@@ -108,6 +137,9 @@ async def run_all_checks(settings: Settings) -> list[CheckResult]:
     )
     results.append(check_configuration(settings))
     results.append(await check_database_connectivity(settings))
+    whm_plugin_result = check_whm_plugin_registration()
+    if whm_plugin_result is not None:
+        results.append(whm_plugin_result)
     return results
 
 

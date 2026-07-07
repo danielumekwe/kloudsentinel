@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}Threats — KloudSentinel{% endblock %}
+{% block title %}Malware Findings — KloudSentinel{% endblock %}
 {% block content %}
 <div class="page-header">
-  <h1>Threats</h1>
+  <h1>Malware Findings</h1>
   <div class="filter-toggle">
-    <a href="/dashboard/threats" class="{{ 'active' if not unacknowledged_only }}">All</a>
-    <a href="/dashboard/threats?unacknowledged_only=true" class="{{ 'active' if unacknowledged_only }}">Unacknowledged</a>
+    <a href="{{ base_path }}/threats" class="{{ 'active' if not unacknowledged_only }}">All</a>
+    <a href="{{ base_path }}/threats?unacknowledged_only=true" class="{{ 'active' if unacknowledged_only }}">Unacknowledged</a>
   </div>
 </div>
 
@@ -26,7 +26,7 @@
       <td>{{ 'yes' if finding.is_acknowledged else 'no' }}</td>
       <td>
         {% if not finding.is_acknowledged %}
-        <form method="post" action="/dashboard/threats/{{ finding.id }}/acknowledge">
+        <form method="post" action="{{ base_path }}/threats/{{ finding.id }}/acknowledge">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <button type="submit" class="link-button">Acknowledge</button>
         </form>

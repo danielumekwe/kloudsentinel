@@ -77,18 +77,23 @@ RequireCsrfToken = Annotated[None, Depends(require_csrf_token)]
 
 def create_session_cookie_value(
     session: AsyncSession, *, admin_user: AdminUserModel, settings: Settings
-) -> tuple[str, timedelta]:
+) -> tuple[str, str, timedelta]:
     """Not itself a request dependency — a small helper shared by the login
-    route to keep session-creation logic in one place."""
+    route and the WHM plugin's session-bridge endpoint to keep
+    session-creation logic in one place. Returns (raw_token, csrf_token,
+    ttl); the csrf_token is only consumed by the bridge endpoint (a normal
+    browser login reads it back off ``request.state.admin_session`` on the
+    next request instead)."""
     raw_token = secrets.token_urlsafe(32)
+    csrf_token = secrets.token_urlsafe(24)
     ttl = timedelta(hours=settings.admin_session_ttl_hours)
     session.add(
         AdminSessionModel(
             admin_user_id=admin_user.id,
             token_hash=hash_token(raw_token),
-            csrf_token=secrets.token_urlsafe(24),
+            csrf_token=csrf_token,
             created_at=utcnow(),
             expires_at=utcnow() + ttl,
         )
     )
-    return raw_token, ttl
+    return raw_token, csrf_token, ttl

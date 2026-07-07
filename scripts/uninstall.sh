@@ -29,6 +29,14 @@ log "removing systemd unit files..."
 rm -f /etc/systemd/system/sentinel-api.service /etc/systemd/system/sentinel-worker.service
 systemctl daemon-reload
 
+if [ -d /usr/local/cpanel ] && [ -f /var/cpanel/apps/kloudsentinel.conf ]; then
+    log "unregistering the KloudSentinel WHM plugin..."
+    /usr/local/cpanel/bin/unregister_appconfig /var/cpanel/apps/kloudsentinel.conf 2>/dev/null || true
+    rm -f /var/cpanel/apps/kloudsentinel.conf
+    rm -rf /usr/local/cpanel/whostmgr/docroot/cgi/kloudsentinel
+    /scripts/restartsrv_cpsrvd 2>/dev/null || true
+fi
+
 if [ "${PURGE_DATA}" -eq 0 ]; then
     cat <<EOF
 

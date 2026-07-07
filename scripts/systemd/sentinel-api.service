@@ -9,7 +9,11 @@ User=root
 Group=root
 WorkingDirectory=__SENTINEL_HOME__
 EnvironmentFile=/etc/sentinel/sentinel.env
-ExecStart=__SENTINEL_HOME__/.venv/bin/uvicorn sentinel.bootstrap:app --host 0.0.0.0 --port 8443
+# Loopback only — never reachable from outside this host. The only
+# intended access path is the WHM plugin's CGI reverse proxy (see
+# whm-plugin/), which itself only runs on this same host. See
+# docs/architecture/decisions/0002-whm-plugin-internal-only-backend.md.
+ExecStart=__SENTINEL_HOME__/.venv/bin/uvicorn sentinel.bootstrap:app --host 127.0.0.1 --port 8443
 Restart=on-failure
 RestartSec=5
 

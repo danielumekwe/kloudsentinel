@@ -10,23 +10,26 @@ Both `sentinel-api` and `sentinel-worker` run as **root**, and
 [ADR 0001](../architecture/decisions/0001-v1-deployment-privilege-and-mode.md)
 for why — this doc only covers the *how*.
 
-## TLS is mandatory before exposing the dashboard — read this first
+## Sentinel is internal-only — access it through the WHM plugin
 
-`sentinel-api` serves plain HTTP on port 8443. It does **not** terminate
-TLS itself. The web dashboard (`/dashboard/login`) submits a username and
-password in a POST body, and the CLI's `create-admin-user`/`create-api-key`
-commands hand you a credential meant to be used over the wire — every one
-of these travels in cleartext, readable by anyone positioned on the
-network path, unless something in front of Sentinel terminates TLS.
+`sentinel-api` binds `127.0.0.1:8443` only. It is **never** reachable from
+outside this host, on any interface — there is no reverse proxy or TLS
+certificate to configure, because there is nothing public to protect. See
+[ADR 0002](../architecture/decisions/0002-whm-plugin-internal-only-backend.md)
+for why.
 
-**Before pointing a browser at this server from anywhere other than
-`localhost`:** put a reverse proxy (nginx, Apache, Caddy — WHM/cPanel
-already ships one) in front of port 8443 with a real certificate, and
-firewall port 8443 itself so it's only reachable from that proxy (or from
-`localhost`), not directly from the internet. Sentinel has no way to
-detect or enforce this itself — `sentinel doctor` cannot see whether a
-reverse proxy exists, so this is not something a startup check can catch
-for you.
+The only intended access path is **WHM ▸ Plugins ▸ KloudSentinel**,
+installed automatically by `install.sh` on any host where it detects
+`/usr/local/cpanel`. It's registered under a dedicated ACL
+(`acls=kloudsentinel`) — root has every ACL by default, so root sees it
+immediately; grant the `kloudsentinel` ACL to a reseller (WHM ▸ Reseller
+Center) if you want them to see it too. There is no separate Sentinel
+login to create for this path — the plugin reuses the WHM session you're
+already authenticated with.
+
+If `/usr/local/cpanel` isn't present (a non-WHM AlmaLinux/RHEL host),
+`install.sh` skips the plugin install and Sentinel runs exactly as before,
+reachable only via `curl`/API calls from `localhost` or an SSH tunnel.
 
 ## Prerequisites
 
@@ -57,9 +60,11 @@ sudo ./scripts/install.sh
 
 `install.sh` installs `uv` if missing, syncs dependencies, creates
 `/etc/sentinel/sentinel.env` from the template (only if it doesn't already
-exist), runs migrations, installs and enables the two systemd units, runs
-`sentinel doctor` as a pre-flight gate (aborts before starting services if
-it reports a FAIL), then starts `sentinel-worker` and `sentinel-api`.
+exist), runs migrations, installs and enables the two systemd units,
+registers the WHM plugin (only if `/usr/local/cpanel` exists — see above),
+runs `sentinel doctor` as a pre-flight gate (aborts before starting
+services if it reports a FAIL), then starts `sentinel-worker` and
+`sentinel-api`.
 
 **Before going further, review `/etc/sentinel/sentinel.env`** — the
 template ships with `config.py`'s production defaults, but confirm the
@@ -144,9 +149,10 @@ sudo -i sentinel doctor   # with sentinel.env sourced, per Install section above
 sudo ./scripts/uninstall.sh
 ```
 
-Stops and disables both services and removes the unit files only — config
-(`/etc/sentinel`), data (`/var/lib/sentinel`, including the database and
-any quarantined files), and the code checkout are left untouched by
-default. Pass `--purge-data` to also remove `/etc/sentinel` and
-`/var/lib/sentinel` (prompts for a typed `yes` confirmation first — this is
-the one irreversible step, so it's opt-in, never the default).
+Stops and disables both services, removes the unit files, and (if present)
+unregisters the WHM plugin — config (`/etc/sentinel`), data
+(`/var/lib/sentinel`, including the database and any quarantined files),
+and the code checkout are left untouched by default. Pass `--purge-data` to
+also remove `/etc/sentinel` and `/var/lib/sentinel` (prompts for a typed
+`yes` confirmation first — this is the one irreversible step, so it's
+opt-in, never the default).

@@ -23,8 +23,14 @@ services:
     # host agents (Imunify360, ClamAV, CSF) operate on cPanel boxes. See
     # docs/architecture/decisions/0001-v1-deployment-privilege-and-mode.md.
     user: root
+    # Bound to loopback only — Sentinel is an internal-only service on a
+    # bare-metal WHM host (see ADR 0002); this Docker path is for local/dev
+    # use only. Docker's own port-forwarding still requires the process
+    # inside the container to bind 0.0.0.0 (see docker/entrypoint.sh) —
+    # this "127.0.0.1:" prefix is what actually restricts *host*-level
+    # reachability to localhost.
     ports:
-      - "8443:8443"
+      - "127.0.0.1:8443:8443"
     environment:
       SENTINEL_ENVIRONMENT: production
       SENTINEL_LOG_LEVEL: INFO

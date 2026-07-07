@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Scan Management — KloudSentinel{% endblock %}
+{% block content %}
+<h1>Scan Management</h1>
+
+<table class="data-table">
+  <thead>
+    <tr><th>Job</th><th>Status</th><th>Last run</th><th>Duration</th><th>Last error</th><th></th></tr>
+  </thead>
+  <tbody>
+    {% for job in jobs %}
+    <tr>
+      <td>{{ job.job_id }}</td>
+      {% if job.heartbeat %}
+      <td><span class="badge badge-{{ job.heartbeat.status.value }}">{{ job.heartbeat.status.value }}</span></td>
+      <td>{{ job.heartbeat.last_run_at.strftime('%Y-%m-%d %H:%M:%S UTC') }}</td>
+      <td>{{ '%.0f'|format(job.heartbeat.last_duration_ms) }} ms</td>
+      <td>{{ job.heartbeat.last_error or '—' }}</td>
+      {% else %}
+      <td><span class="badge">never run</span></td>
+      <td>—</td>
+      <td>—</td>
+      <td>—</td>
+      {% endif %}
+      <td>
+        {% if job.triggerable %}
+        <form method="post" action="{{ base_path }}/scans/run/{{ job.job_id }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="link-button">Run now</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6" class="empty">No jobs registered.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

@@ -7,7 +7,7 @@
   {% if error %}
   <div class="alert alert-error">{{ error }}</div>
   {% endif %}
-  <form method="post" action="/dashboard/login">
+  <form method="post" action="{{ base_path }}/login">
     <label for="username">Username</label>
     <input type="text" id="username" name="username" autocomplete="username" required autofocus>
     <label for="password">Password</label>

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 
 from sentinel.application.integrity.use_cases import QuarantineFindingUseCase
+from sentinel.bootstrap import create_app
 from sentinel.config import Settings
 from sentinel.domain.integrity.value_objects import RemediationState
 from sentinel.domain.shared.entity import utcnow
@@ -23,6 +24,7 @@ from sentinel.infrastructure.persistence.repositories.integrity import (
 )
 from sentinel.infrastructure.security.passwords import hash_password
 from tests.e2e.test_integrity_api import _seed_account, _seed_finding
+from tests.e2e.test_intelligence_api import _seed_incident
 
 _USERNAME = "admin"
 _PASSWORD = "correct horse battery staple"
@@ -231,3 +233,103 @@ def test_logout_revokes_session(client: TestClient, admin_user: str) -> None:
     dashboard_response = client.get("/dashboard/", follow_redirects=False)
     assert dashboard_response.status_code == 303
     assert dashboard_response.headers["location"] == "/dashboard/login"
+
+
+def test_incidents_list_renders_empty_state(client: TestClient, admin_user: str) -> None:
+    _login(client)
+
+    response = client.get("/dashboard/incidents")
+
+    assert response.status_code == 200
+    assert "No incidents recorded yet." in response.text
+
+
+async def test_incidents_list_and_detail_render_seeded_incident(
+    client: TestClient, database: Database, admin_user: str
+) -> None:
+    incident_id = await _seed_incident(database, title="Correlated webshell activity")
+    _login(client)
+
+    list_response = client.get("/dashboard/incidents")
+    assert list_response.status_code == 200
+    assert "Correlated webshell activity" in list_response.text
+
+    detail_response = client.get(f"/dashboard/incidents/{incident_id}")
+    assert detail_response.status_code == 200
+    assert "Correlated webshell activity" in detail_response.text
+
+
+def test_incident_detail_404s_for_unknown_id(client: TestClient, admin_user: str) -> None:
+    _login(client)
+
+    response = client.get(f"/dashboard/incidents/{uuid4()}")
+
+    assert response.status_code == 404
+
+
+def test_scans_page_lists_every_registered_job(client: TestClient, admin_user: str) -> None:
+    _login(client)
+
+    response = client.get("/dashboard/scans")
+
+    assert response.status_code == 200
+    assert "discovery" in response.text
+    assert "auto_quarantine" in response.text
+
+
+def test_run_single_scan_requires_valid_csrf_token(client: TestClient, admin_user: str) -> None:
+    _login(client)
+
+    response = client.post("/dashboard/scans/run/integrity", data={"csrf_token": "wrong"})
+
+    assert response.status_code == 403
+
+
+def test_run_single_scan_triggers_background_task(client: TestClient, admin_user: str) -> None:
+    _login(client)
+    csrf = _csrf_token(client, "/dashboard/scans")
+
+    response = client.post(
+        "/dashboard/scans/run/integrity", data={"csrf_token": csrf}, follow_redirects=False
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/dashboard/scans"
+
+
+def test_run_single_scan_rejects_non_detection_job_id(client: TestClient, admin_user: str) -> None:
+    """auto_quarantine and correlation are deliberately excluded from manual
+    triggering (see DETECTION_SCAN_JOB_IDS) — they consume what detection
+    jobs produce and stay on their own schedule."""
+    _login(client)
+    csrf = _csrf_token(client, "/dashboard/scans")
+
+    response = client.post("/dashboard/scans/run/auto_quarantine", data={"csrf_token": csrf})
+
+    assert response.status_code == 404
+
+
+def test_run_single_scan_rejects_unknown_job_id(client: TestClient, admin_user: str) -> None:
+    _login(client)
+    csrf = _csrf_token(client, "/dashboard/scans")
+
+    response = client.post("/dashboard/scans/run/not-a-real-job", data={"csrf_token": csrf})
+
+    assert response.status_code == 404
+
+
+def test_dashboard_links_respect_configured_base_path(
+    settings: Settings, database: Database
+) -> None:
+    """Every dashboard link/redirect renders against
+    ``Settings.dashboard_base_path`` rather than a hardcoded "/dashboard" —
+    this is what lets the same HTML work whether loaded directly or through
+    the WHM plugin's CGI reverse proxy under a different URL prefix."""
+    del database
+    proxied_settings = settings.model_copy(
+        update={"dashboard_base_path": "/cgi/kloudsentinel/index.cgi"}
+    )
+    with TestClient(create_app(proxied_settings)) as proxied_client:
+        login_page = proxied_client.get("/dashboard/login")
+        assert 'action="/cgi/kloudsentinel/index.cgi/login"' in login_page.text
+        assert 'href="/cgi/kloudsentinel/index.cgi/static/css/dashboard.css"' in login_page.text

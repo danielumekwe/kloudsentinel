@@ -5,7 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 
-from sentinel.api.dependencies import DbSession
+from sentinel.api.dependencies import AppSettings, DbSession
 from sentinel.application.integrity.queries import (
     AcknowledgeIntegrityFindingUseCase,
     ListIntegrityFindingsQuery,
@@ -45,6 +45,7 @@ async def list_threats(
 async def acknowledge_threat(
     finding_id: UUID,
     session: DbSession,
+    settings: AppSettings,
     admin_user: RequireAdminSession,
     _csrf: RequireCsrfToken,
 ) -> RedirectResponse:
@@ -54,4 +55,4 @@ async def acknowledge_threat(
         await use_case.execute(finding_id)
     except EntityNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-    return RedirectResponse(url="/dashboard/threats", status_code=303)
+    return RedirectResponse(url=f"{settings.dashboard_base_path}/threats", status_code=303)
