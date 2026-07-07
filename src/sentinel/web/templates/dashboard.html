@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — KloudSentinel{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Dashboard</h1>
+  <form method="post" action="/dashboard/scans/run">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="primary">Run Scan Now</button>
+  </form>
+</div>
+
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-value">{{ summary.protected_accounts_total }}</div>
+    <div class="stat-label">Protected accounts</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value">{{ summary.threats_detected_total }}</div>
+    <div class="stat-label">Threats detected</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value">{{ summary.quarantined_files_total }}</div>
+    <div class="stat-label">Quarantined files</div>
+  </div>
+</div>
+
+<section>
+  <h2>Scan status</h2>
+  <table class="data-table">
+    <thead>
+      <tr><th>Job</th><th>Status</th><th>Last run</th><th>Duration</th></tr>
+    </thead>
+    <tbody>
+      {% for heartbeat in summary.heartbeats %}
+      <tr>
+        <td>{{ heartbeat.job_id }}</td>
+        <td><span class="badge badge-{{ heartbeat.status.value }}">{{ heartbeat.status.value }}</span></td>
+        <td>{{ heartbeat.last_run_at.strftime('%Y-%m-%d %H:%M:%S UTC') }}</td>
+        <td>{{ '%.0f'|format(heartbeat.last_duration_ms) }} ms</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4" class="empty">No jobs have run yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>Recent events</h2>
+  <table class="data-table">
+    <thead>
+      <tr><th>Type</th><th>Severity</th><th>Occurred</th><th>Path</th></tr>
+    </thead>
+    <tbody>
+      {% for event in summary.recent_events %}
+      <tr>
+        <td>{{ event.event_type }}</td>
+        <td><span class="badge badge-severity-{{ event.severity.value|lower }}">{{ event.severity.value }}</span></td>
+        <td>{{ event.occurred_at.strftime('%Y-%m-%d %H:%M:%S UTC') }}</td>
+        <td>{{ event.file_path or '—' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4" class="empty">No events recorded yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

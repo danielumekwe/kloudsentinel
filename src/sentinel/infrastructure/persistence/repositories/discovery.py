@@ -3,7 +3,7 @@ from __future__ import annotations
 import builtins
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sentinel.domain.discovery.entities import CpanelAccount, Server, WordPressInstallation
@@ -130,6 +130,10 @@ class SqlAlchemyCpanelAccountRepository:
             select(CpanelAccountModel).where(CpanelAccountModel.server_id == server_id)
         )
         return [_account_to_entity(model) for model in result.scalars()]
+
+    async def count_total(self) -> int:
+        result = await self._session.execute(select(func.count()).select_from(CpanelAccountModel))
+        return result.scalar_one()
 
 
 def _installation_to_entity(model: WordPressInstallationModel) -> WordPressInstallation:

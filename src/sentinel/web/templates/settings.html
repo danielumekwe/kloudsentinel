@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Settings — KloudSentinel{% endblock %}
+{% block content %}
+<h1>Settings</h1>
+<p class="subtitle">
+  Read-only. To change a value, edit the environment file
+  (<code>/etc/sentinel/sentinel.env</code> on a bare-metal install, or the
+  service's environment block in <code>docker-compose.yml</code>) and
+  restart <code>sentinel-api</code>/<code>sentinel-worker</code>. See
+  <code>docs/deployment/</code> for the full reference.
+</p>
+
+<section>
+  <h2>Mode</h2>
+  <table class="kv-table">
+    <tr><th>SENTINEL_MODE</th><td>{{ settings.mode }}</td></tr>
+    <tr><th>Environment</th><td>{{ settings.environment }}</td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>Auto-quarantine</h2>
+  <table class="kv-table">
+    <tr><th>Max per account per run</th><td>{{ settings.auto_quarantine_max_per_account_per_run }}</td></tr>
+    <tr><th>Interval (minutes)</th><td>{{ settings.auto_quarantine_interval_minutes }}</td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>Scan intervals (minutes)</h2>
+  <table class="kv-table">
+    <tr><th>Discovery</th><td>{{ settings.discovery_scan_interval_minutes }}</td></tr>
+    <tr><th>Integrity</th><td>{{ settings.integrity_scan_interval_minutes }}</td></tr>
+    <tr><th>Inventory</th><td>{{ settings.inventory_scan_interval_minutes }}</td></tr>
+    <tr><th>Configuration</th><td>{{ settings.monitoring_scan_interval_minutes }}</td></tr>
+    <tr><th>Temp-file forensics</th><td>{{ settings.forensics_scan_interval_minutes }}</td></tr>
+    <tr><th>WordPress inventory</th><td>{{ settings.wordpress_inventory_scan_interval_minutes }}</td></tr>
+    <tr><th>WordPress integrity audit</th><td>{{ settings.wordpress_integrity_audit_interval_minutes }}</td></tr>
+    <tr><th>WordPress forensic scan</th><td>{{ settings.wordpress_forensic_scan_interval_minutes }}</td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>Host paths</h2>
+  <table class="kv-table">
+    <tr><th>cPanel /etc</th><td class="mono">{{ settings.cpanel_etc_directory }}</td></tr>
+    <tr><th>cPanel home base</th><td class="mono">{{ settings.cpanel_home_base_directory }}</td></tr>
+    <tr><th>Quarantine root</th><td class="mono">{{ settings.quarantine_root_directory }}</td></tr>
+    <tr><th>Forensics temp dirs</th><td class="mono">{{ settings.forensics_temp_directories }}</td></tr>
+  </table>
+</section>
+{% endblock %}

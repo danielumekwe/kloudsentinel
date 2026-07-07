@@ -182,6 +182,12 @@ class Settings(BaseSettings):
     auto_quarantine_max_per_account_per_run: int = 5
     auto_quarantine_interval_minutes: int = 20
 
+    # Web dashboard: how long a login session stays valid without
+    # re-authenticating. Sessions are server-side revocable rows
+    # (AdminSessionModel) — this is just the default expiry stamped on
+    # creation, not a hard cap enforced elsewhere.
+    admin_session_ttl_hours: int = 12
+
     @property
     def is_development(self) -> bool:
         return self.environment == "development"

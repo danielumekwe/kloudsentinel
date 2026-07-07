@@ -2,17 +2,23 @@ from __future__ import annotations
 
 from uuid import UUID, uuid4
 
-from sentinel.application.observability.queries import GetSystemStatusQuery
+from sentinel.application.observability.queries import (
+    GetDashboardSummaryQuery,
+    GetSystemStatusQuery,
+)
+from sentinel.domain.discovery.entities import CpanelAccount
+from sentinel.domain.discovery.value_objects import LinuxUsername
 from sentinel.domain.events.entities import SecurityEvent
 from sentinel.domain.forensics.entities import TempFileObservation
 from sentinel.domain.forensics.value_objects import TempFileVerdict
 from sentinel.domain.integrity.entities import IntegrityFinding
-from sentinel.domain.integrity.value_objects import ChangeType
+from sentinel.domain.integrity.value_objects import ChangeType, RemediationState
 from sentinel.domain.observability.entities import JobHeartbeat
 from sentinel.domain.observability.value_objects import JobHeartbeatStatus
 from sentinel.domain.shared.entity import utcnow
 from sentinel.domain.shared.value_objects import (
     AbsoluteFilePath,
+    DomainName,
     RelativeFilePath,
     Severity,
     Sha256Hash,
@@ -91,6 +97,31 @@ class FakeIntegrityFindingRepository:
     async def count_total(self) -> int:
         return len(self.by_id)
 
+    async def list_by_remediation_state(
+        self, state: RemediationState, *, limit: int = 200
+    ) -> list[IntegrityFinding]:
+        return [f for f in self.by_id.values() if f.remediation_state == state][:limit]
+
+
+class FakeCpanelAccountRepository:
+    def __init__(self, accounts: list[CpanelAccount] | None = None) -> None:
+        self.by_id: dict[UUID, CpanelAccount] = {a.id: a for a in accounts or []}
+
+    async def add(self, entity: CpanelAccount) -> None:
+        self.by_id[entity.id] = entity
+
+    async def save(self, entity: CpanelAccount) -> None:
+        self.by_id[entity.id] = entity
+
+    async def get(self, entity_id: UUID) -> CpanelAccount | None:
+        return self.by_id.get(entity_id)
+
+    async def list(self, *, limit: int = 50, offset: int = 0) -> list[CpanelAccount]:
+        return list(self.by_id.values())[offset : offset + limit]
+
+    async def count_total(self) -> int:
+        return len(self.by_id)
+
 
 class FakeTempFileObservationRepository:
     def __init__(self, observations: list[TempFileObservation] | None = None) -> None:
@@ -139,6 +170,18 @@ def _observation(verdict: TempFileVerdict) -> TempFileObservation:
         process=None,
         account_id=None,
         detected_at=utcnow(),
+    )
+
+
+def _account() -> CpanelAccount:
+    return CpanelAccount(
+        server_id=uuid4(),
+        username=LinuxUsername(value="examplebob"),
+        primary_domain=DomainName(value="example.com"),
+        home_directory=AbsoluteFilePath(value="/home/examplebob"),
+        is_suspended=False,
+        is_active=True,
+        last_seen_at=utcnow(),
     )
 
 
@@ -210,3 +253,39 @@ async def test_get_system_status_handles_empty_repositories() -> None:
     assert result.integrity_findings_total == 0
     assert result.temp_files_malicious == 0
     assert result.temp_files_suspicious == 0
+
+
+async def test_get_dashboard_summary_composes_system_status_with_accounts_and_events() -> None:
+    findings = FakeIntegrityFindingRepository([_finding()])
+    quarantined = _finding()
+    quarantined.quarantine(
+        quarantine_path="/var/lib/sentinel/quarantine/x",
+        mode="600",
+        size_bytes=10,
+        owner_uid=1000,
+        owner_gid=1000,
+        at=utcnow(),
+    )
+    findings.by_id[quarantined.id] = quarantined
+    accounts = FakeCpanelAccountRepository([_account(), _account()])
+    events = FakeSecurityEventRepository([_event(processed=True), _event(processed=False)])
+
+    query = GetDashboardSummaryQuery(
+        system_status_query=GetSystemStatusQuery(
+            heartbeat_repository=FakeJobHeartbeatRepository(),
+            event_repository=events,
+            finding_repository=findings,
+            observation_repository=FakeTempFileObservationRepository(),
+        ),
+        account_repository=accounts,
+        event_repository=events,
+        finding_repository=findings,
+    )
+
+    result = await query.execute()
+
+    assert result.protected_accounts_total == 2
+    assert result.threats_detected_total == len(findings.by_id)
+    assert result.quarantined_files_total == 1
+    assert len(result.recent_events) == 2
+    assert result.heartbeats == []

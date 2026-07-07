@@ -8,6 +8,7 @@ from sentinel.domain.integrity.ports import (
     IntegrityFindingRepository,
     RemediationActionRepository,
 )
+from sentinel.domain.integrity.value_objects import RemediationState
 from sentinel.domain.shared.exceptions import EntityNotFoundError
 
 
@@ -47,6 +48,20 @@ class AcknowledgeIntegrityFindingUseCase:
         finding.acknowledge()
         await self._findings.save(finding)
         return finding
+
+
+class ListQuarantinedFindingsQuery:
+    """Same repository call the CLI's ``sentinel quarantine list`` already
+    makes directly (``cli.py``'s ``_run_quarantine_list``) — wrapped as a
+    query so the dashboard can reuse it instead of duplicating the call."""
+
+    def __init__(self, finding_repository: IntegrityFindingRepository) -> None:
+        self._findings = finding_repository
+
+    async def execute(self, *, limit: int = 200) -> list[IntegrityFinding]:
+        return await self._findings.list_by_remediation_state(
+            RemediationState.QUARANTINED, limit=limit
+        )
 
 
 class ListRemediationActionsQuery:

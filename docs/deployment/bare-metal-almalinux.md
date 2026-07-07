@@ -10,6 +10,24 @@ Both `sentinel-api` and `sentinel-worker` run as **root**, and
 [ADR 0001](../architecture/decisions/0001-v1-deployment-privilege-and-mode.md)
 for why — this doc only covers the *how*.
 
+## TLS is mandatory before exposing the dashboard — read this first
+
+`sentinel-api` serves plain HTTP on port 8443. It does **not** terminate
+TLS itself. The web dashboard (`/dashboard/login`) submits a username and
+password in a POST body, and the CLI's `create-admin-user`/`create-api-key`
+commands hand you a credential meant to be used over the wire — every one
+of these travels in cleartext, readable by anyone positioned on the
+network path, unless something in front of Sentinel terminates TLS.
+
+**Before pointing a browser at this server from anywhere other than
+`localhost`:** put a reverse proxy (nginx, Apache, Caddy — WHM/cPanel
+already ships one) in front of port 8443 with a real certificate, and
+firewall port 8443 itself so it's only reachable from that proxy (or from
+`localhost`), not directly from the internet. Sentinel has no way to
+detect or enforce this itself — `sentinel doctor` cannot see whether a
+reverse proxy exists, so this is not something a startup check can catch
+for you.
+
 ## Prerequisites
 
 AlmaLinux 9:

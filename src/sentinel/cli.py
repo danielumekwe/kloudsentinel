@@ -47,7 +47,7 @@ from sentinel.infrastructure.filesystem.file_remediator import FilesystemFileRem
 from sentinel.infrastructure.filesystem.local_file_remediator import LocalFileRemediator
 from sentinel.infrastructure.heuristics.php_malware_scanner import PhpMalwareScanner
 from sentinel.infrastructure.persistence.database import Database
-from sentinel.infrastructure.persistence.models import ApiKeyModel
+from sentinel.infrastructure.persistence.models import AdminUserModel, ApiKeyModel
 from sentinel.infrastructure.persistence.repositories.discovery import (
     SqlAlchemyCpanelAccountRepository,
     SqlAlchemyWordPressInstallationRepository,
@@ -67,6 +67,7 @@ from sentinel.infrastructure.persistence.repositories.observability import (
 from sentinel.infrastructure.persistence.repositories.wordpress_integrity import (
     SqlAlchemyCoreChecksumRepository,
 )
+from sentinel.infrastructure.security.passwords import hash_password
 from sentinel.infrastructure.validation import (
     CheckResult,
     check_database_connectivity,
@@ -464,6 +465,41 @@ def create_api_key(
     typer.echo(f"API key created: {name!r}\n")
     typer.echo(raw_key)
     typer.echo("\nSave this now — it will not be shown again.")
+
+
+async def _create_admin_user(settings: Settings, *, username: str, password: str) -> None:
+    database = Database(settings)
+    try:
+        async with database.session() as session:
+            session.add(
+                AdminUserModel(
+                    username=username,
+                    password_hash=hash_password(password),
+                    is_active=True,
+                    created_at=utcnow(),
+                )
+            )
+            await session.commit()
+    finally:
+        await database.dispose()
+
+
+@app.command(name="create-admin-user")
+def create_admin_user(
+    username: Annotated[
+        str, typer.Option("--username", help="Login username for the web dashboard.")
+    ],
+) -> None:
+    """Create a dashboard login. Prompts for a password (not echoed to the
+    terminal, confirmed twice) — only its bcrypt hash is ever persisted,
+    same "store only a hash" principle as `create-api-key`."""
+    settings = get_settings()
+    password = typer.prompt("Password", hide_input=True, confirmation_prompt=True)
+    if len(password) < 12:
+        typer.echo("Error: password must be at least 12 characters.", err=True)
+        raise typer.Exit(code=1)
+    asyncio.run(_create_admin_user(settings, username=username, password=password))
+    typer.echo(f"Admin user created: {username!r}")
 
 
 wp_app = typer.Typer(help="WordPress Security Engine commands.")

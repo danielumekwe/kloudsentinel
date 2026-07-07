@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Log in — KloudSentinel{% endblock %}
+{% block content %}
+<div class="login-box">
+  <h1>KloudSentinel</h1>
+  <p class="subtitle">Sign in to the security dashboard</p>
+  {% if error %}
+  <div class="alert alert-error">{{ error }}</div>
+  {% endif %}
+  <form method="post" action="/dashboard/login">
+    <label for="username">Username</label>
+    <input type="text" id="username" name="username" autocomplete="username" required autofocus>
+    <label for="password">Password</label>
+    <input type="password" id="password" name="password" autocomplete="current-password" required>
+    <button type="submit" class="primary">Log in</button>
+  </form>
+</div>
+{% endblock %}

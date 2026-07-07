@@ -5,11 +5,41 @@ import uuid
 from collections.abc import Awaitable, Callable
 
 import structlog
+from starlette import status
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import PlainTextResponse, Response
 
 logger = structlog.get_logger()
+
+#: Every current request body (dashboard login/CSRF forms, JSON API
+#: bodies) is at most a few hundred bytes — this is a generous ceiling
+#: meant only to stop a client from forcing the server to buffer an
+#: arbitrarily large body in memory. Checked against the declared
+#: Content-Length header before the body is read; a client that omits
+#: Content-Length or lies about it via chunked transfer-encoding isn't
+#: caught here — a reverse proxy in front of Sentinel (nginx
+#: `client_max_body_size`, etc.) should enforce the same limit at the
+#: network edge in production.
+_MAX_REQUEST_BODY_BYTES = 1_048_576
+
+
+class MaxBodySizeMiddleware(BaseHTTPMiddleware):
+    async def dispatch(
+        self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                declared_size = int(content_length)
+            except ValueError:
+                declared_size = None
+            if declared_size is not None and declared_size > _MAX_REQUEST_BODY_BYTES:
+                return PlainTextResponse(
+                    "Request body too large",
+                    status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                )
+        return await call_next(request)
 
 
 class RequestContextMiddleware(BaseHTTPMiddleware):

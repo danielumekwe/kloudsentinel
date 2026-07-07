@@ -1,3 +1,4 @@
+from sentinel.infrastructure.persistence.models.admin import AdminSessionModel, AdminUserModel
 from sentinel.infrastructure.persistence.models.api_key import ApiKeyModel
 from sentinel.infrastructure.persistence.models.discovery import (
     CpanelAccountModel,
@@ -26,6 +27,8 @@ from sentinel.infrastructure.persistence.models.wordpress_integrity import CoreC
 from sentinel.infrastructure.persistence.models.wordpress_inventory import WordPressCronJobModel
 
 __all__ = [
+    "AdminSessionModel",
+    "AdminUserModel",
     "ApiKeyModel",
     "ConfigurationItemModel",
     "CoreChecksumRecordModel",

@@ -4,15 +4,20 @@ import logging
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import structlog
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
-from sentinel.api.middleware import RequestContextMiddleware
+from sentinel.api.middleware import MaxBodySizeMiddleware, RequestContextMiddleware
 from sentinel.api.v1.router import api_router
 from sentinel.config import Settings, get_settings
 from sentinel.infrastructure.persistence.database import Database
 from sentinel.infrastructure.validation import has_critical_failures, run_all_checks
+from sentinel.web.dependencies import RedirectToLogin
+from sentinel.web.router import web_router
 
 
 def configure_logging(settings: Settings) -> None:
@@ -82,11 +87,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(
         title="Sentinel Core",
         description="Kloud101 AI Sentinel — Core Monitoring Engine API",
-        version="0.1.0",
+        version="1.0.0",
         lifespan=lifespan,
     )
+    # Registration order matters: Starlette wraps middleware outside-in in
+    # reverse of add_middleware() call order, so MaxBodySizeMiddleware
+    # (added first, innermost) runs its check before any route/dependency
+    # code touches the body, while RequestContextMiddleware (added last,
+    # outermost) still wraps it — a rejected oversized request gets an
+    # access-log line too, not silently dropped before request_id/logging
+    # are set up.
+    app.add_middleware(MaxBodySizeMiddleware)
     app.add_middleware(RequestContextMiddleware)
     app.include_router(api_router)
+    app.include_router(web_router)
+
+    static_dir = Path(__file__).parent / "web" / "static"
+    app.mount("/dashboard/static", StaticFiles(directory=str(static_dir)), name="dashboard-static")
+
+    @app.exception_handler(RedirectToLogin)
+    async def _redirect_to_login(request: Request, exc: RedirectToLogin) -> RedirectResponse:
+        del request, exc
+        return RedirectResponse(url="/dashboard/login", status_code=303)
+
     return app
 
 

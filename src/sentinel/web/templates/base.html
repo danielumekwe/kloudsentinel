@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}KloudSentinel{% endblock %}</title>
+  <link rel="stylesheet" href="/dashboard/static/css/dashboard.css">
+</head>
+<body>
+  {% if admin_user %}
+  <header class="topbar">
+    <div class="brand">KloudSentinel</div>
+    <nav>
+      <a href="/dashboard">Dashboard</a>
+      <a href="/dashboard/threats">Threats</a>
+      <a href="/dashboard/quarantine">Quarantine</a>
+      <a href="/dashboard/settings">Settings</a>
+    </nav>
+    <form method="post" action="/dashboard/logout" class="logout-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <span class="username">{{ admin_user.username }}</span>
+      <button type="submit" class="link-button">Log out</button>
+    </form>
+  </header>
+  {% endif %}
+  <main class="content">
+    {% block content %}{% endblock %}
+  </main>
+  <script src="/dashboard/static/js/dashboard.js"></script>
+</body>
+</html>

@@ -45,7 +45,26 @@
       "Bash(bash -n /Users/Apple/sentinel-core/scripts/install.sh)",
       "Bash(bash -n /Users/Apple/sentinel-core/scripts/uninstall.sh)",
       "Bash(bash -c ' *)",
-      "Bash(awk '{print $1, $2}')"
+      "Bash(awk '{print $1, $2}')",
+      "Bash(pip show *)",
+      "Bash(/Users/Apple/sentinel-core/.venv/bin/python -c \"import bcrypt; print\\(bcrypt.__version__\\)\")",
+      "Bash(/Users/Apple/sentinel-core/.venv/bin/python -c \"import jinja2; print\\(jinja2.__version__\\)\")",
+      "Bash(SENTINEL_DATABASE_URL=\"sqlite+aiosqlite:///$\\(pwd\\)/dev-data/_migration_head_check.db\" uv run alembic heads)",
+      "Bash(rm -f dev-data/_migration_head_check.db dev-data/_migration_head_check.db-* dev-data/_migration_scratch.db dev-data/_migration_scratch.db-*)",
+      "Bash(SENTINEL_DATABASE_URL=\"sqlite+aiosqlite:///$\\(pwd\\)/dev-data/_migration_scratch.db\" uv run alembic revision --autogenerate -m \"add admin dashboard auth tables\")",
+      "Bash(SENTINEL_DATABASE_URL=\"sqlite+aiosqlite:///$\\(pwd\\)/dev-data/_migration_scratch.db\" uv run alembic downgrade -1)",
+      "Bash(/Users/Apple/sentinel-core/.venv/bin/python -c \"import fastapi, starlette; print\\('fastapi', fastapi.__version__\\); print\\('starlette', starlette.__version__\\)\")",
+      "Bash(/Users/Apple/sentinel-core/.venv/bin/python -c ' *)",
+      "Bash(export SENTINEL_ENVIRONMENT=development)",
+      "Bash(export SENTINEL_DATABASE_URL=\"sqlite+aiosqlite:////tmp/sentinel_smoke/sentinel.db\")",
+      "Bash(export SENTINEL_MODE=manual)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code} -> %{redirect_url}\\\\n\" http://127.0.0.1:8799/dashboard)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://127.0.0.1:8799/dashboard/login)",
+      "Bash(curl -s -c cookies.txt -o /dev/null -w '%{http_code}\\\\n' -X POST http://127.0.0.1:8799/dashboard/login -d 'username=admin&password=wrongpassword')",
+      "Bash(curl -s -c cookies.txt -o /dev/null -w '%{http_code} -> %{redirect_url}\\\\n' -X POST http://127.0.0.1:8799/dashboard/login -d 'username=admin&password=smoketest123')",
+      "Bash(curl -s -L -o /dev/null -w \"%{http_code} final=%{url_effective}\\\\n\" http://127.0.0.1:8799/dashboard)",
+      "Bash(curl -s -i http://127.0.0.1:8799/dashboard)",
+      "Bash(curl -s -i http://127.0.0.1:8799/dashboard/)"
     ],
     "additionalDirectories": [
       "/Users/Apple/sentinel-core/dev-data"

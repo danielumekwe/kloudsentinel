@@ -40,6 +40,15 @@ another location) instead of just reporting them.
 
 ## Deployment
 
+**TLS is mandatory before exposing the dashboard.** `api` serves plain
+HTTP on 8443 — it does not terminate TLS. The web dashboard's login form
+and the CLI-issued credentials all travel in cleartext unless a reverse
+proxy with a real certificate sits in front of this port and 8443 itself
+is firewalled off from direct internet access. See
+`docs/deployment/bare-metal-almalinux.md`'s TLS section for the full
+reasoning — it applies here too, `docker-compose.yml` publishes 8443
+exactly the same way.
+
 ```bash
 docker compose up migrate   # applies alembic migrations, then exits
 docker compose up -d api worker

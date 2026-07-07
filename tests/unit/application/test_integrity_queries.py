@@ -8,9 +8,10 @@ from sentinel.application.integrity.queries import (
     AcknowledgeIntegrityFindingUseCase,
     ListFileBaselinesQuery,
     ListIntegrityFindingsQuery,
+    ListQuarantinedFindingsQuery,
 )
 from sentinel.domain.integrity.entities import IntegrityFinding
-from sentinel.domain.integrity.value_objects import ChangeType
+from sentinel.domain.integrity.value_objects import ChangeType, RemediationState
 from sentinel.domain.shared.entity import utcnow
 from sentinel.domain.shared.exceptions import EntityNotFoundError
 from sentinel.domain.shared.value_objects import RelativeFilePath, Severity, Sha256Hash
@@ -20,7 +21,11 @@ from tests.unit.application.test_integrity_use_cases import (
 )
 
 
-def _finding(*, is_acknowledged: bool = False) -> IntegrityFinding:
+def _finding(
+    *,
+    is_acknowledged: bool = False,
+    remediation_state: RemediationState = RemediationState.NONE,
+) -> IntegrityFinding:
     return IntegrityFinding(
         account_id=uuid4(),
         relative_path=RelativeFilePath(value="public_html/index.php"),
@@ -30,6 +35,7 @@ def _finding(*, is_acknowledged: bool = False) -> IntegrityFinding:
         current_sha256=Sha256Hash(value="b" * 64),
         detected_at=utcnow(),
         is_acknowledged=is_acknowledged,
+        remediation_state=remediation_state,
     )
 
 
@@ -83,3 +89,16 @@ async def test_acknowledge_use_case_raises_for_unknown_finding() -> None:
 
     with pytest.raises(EntityNotFoundError):
         await use_case.execute(uuid4())
+
+
+async def test_list_quarantined_findings_query_filters_by_state() -> None:
+    findings = FakeIntegrityFindingRepository()
+    quarantined = _finding(remediation_state=RemediationState.QUARANTINED)
+    await findings.add(quarantined)
+    await findings.add(_finding(remediation_state=RemediationState.NONE))
+    await findings.add(_finding(remediation_state=RemediationState.RESTORED))
+    query = ListQuarantinedFindingsQuery(findings)
+
+    result = await query.execute()
+
+    assert result == [quarantined]

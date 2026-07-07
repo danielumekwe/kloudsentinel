@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Threats — KloudSentinel{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Threats</h1>
+  <div class="filter-toggle">
+    <a href="/dashboard/threats" class="{{ 'active' if not unacknowledged_only }}">All</a>
+    <a href="/dashboard/threats?unacknowledged_only=true" class="{{ 'active' if unacknowledged_only }}">Unacknowledged</a>
+  </div>
+</div>
+
+<table class="data-table">
+  <thead>
+    <tr>
+      <th>Path</th><th>Change</th><th>Severity</th><th>Detected</th><th>Remediation</th><th>Acknowledged</th><th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for finding in findings %}
+    <tr>
+      <td class="mono">{{ finding.relative_path }}</td>
+      <td>{{ finding.change_type.value }}</td>
+      <td><span class="badge badge-severity-{{ finding.severity.value|lower }}">{{ finding.severity.value }}</span></td>
+      <td>{{ finding.detected_at.strftime('%Y-%m-%d %H:%M:%S UTC') }}</td>
+      <td>{{ finding.remediation_state.value }}</td>
+      <td>{{ 'yes' if finding.is_acknowledged else 'no' }}</td>
+      <td>
+        {% if not finding.is_acknowledged %}
+        <form method="post" action="/dashboard/threats/{{ finding.id }}/acknowledge">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="link-button">Acknowledge</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="7" class="empty">No threats found.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
