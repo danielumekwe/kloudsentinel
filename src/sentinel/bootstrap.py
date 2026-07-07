@@ -12,6 +12,7 @@ from sentinel.api.middleware import RequestContextMiddleware
 from sentinel.api.v1.router import api_router
 from sentinel.config import Settings, get_settings
 from sentinel.infrastructure.persistence.database import Database
+from sentinel.infrastructure.validation import has_critical_failures, run_all_checks
 
 
 def configure_logging(settings: Settings) -> None:
@@ -54,10 +55,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        results = await run_all_checks(settings)
+        for result in results:
+            log_method = {"PASS": logger.info, "WARN": logger.warning, "FAIL": logger.error}[
+                result.status
+            ]
+            log_method(
+                "startup_check", name=result.name, status=result.status, detail=result.detail
+            )
+        if has_critical_failures(results):
+            logger.error("sentinel_core_startup_aborted")
+            raise RuntimeError(
+                "Sentinel failed startup validation — see startup_check log lines above"
+            )
+
         database = Database(settings)
         app.state.database = database
         app.state.settings = settings
-        logger.info("sentinel_core_startup", environment=settings.environment)
+        logger.info("sentinel_core_startup", environment=settings.environment, mode=settings.mode)
         try:
             yield
         finally:

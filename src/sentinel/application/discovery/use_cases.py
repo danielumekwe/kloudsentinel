@@ -157,6 +157,7 @@ class RunDiscoveryUseCase:
                 wp_version=finding.wp_version,
                 is_multisite=finding.is_multisite,
                 last_seen_at=now,
+                php_version=finding.php_version,
             )
             await self._installations.add(installation)
             return installation
@@ -166,6 +167,7 @@ class RunDiscoveryUseCase:
             wp_version=finding.wp_version,
             is_multisite=finding.is_multisite,
             at=now,
+            php_version=finding.php_version,
         )
         await self._installations.save(existing)
         return existing

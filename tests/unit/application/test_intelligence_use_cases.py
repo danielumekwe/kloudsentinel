@@ -37,6 +37,12 @@ class FakeSecurityEventRepository:
     async def list_unprocessed(self, *, limit: int = 200) -> list[SecurityEvent]:
         return [e for e in self.by_id.values() if e.processed_at is None][:limit]
 
+    async def count_total(self) -> int:
+        return len(self.by_id)
+
+    async def count_unprocessed(self) -> int:
+        return len([e for e in self.by_id.values() if e.processed_at is None])
+
 
 class FakeIncidentRepository:
     def __init__(self) -> None:

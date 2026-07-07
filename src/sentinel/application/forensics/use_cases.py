@@ -9,6 +9,7 @@ from sentinel.domain.events.ports import SecurityEventRepository
 from sentinel.domain.forensics.ports import TempFileObservationRepository, TempFileScanner
 from sentinel.domain.forensics.value_objects import TempFileVerdict
 from sentinel.domain.shared.value_objects import Severity
+from sentinel.infrastructure.heuristics.php_malware_scanner import PhpMalwareScanner
 
 logger = structlog.get_logger()
 
@@ -75,6 +76,19 @@ class ScanTempDirectoriesUseCase:
                             "verdict_reason": observation.verdict_reason,
                         },
                         occurred_at=observation.detected_at,
+                        server_id=observation.server_id,
+                        file_path=str(observation.absolute_path),
+                        sha256=str(observation.sha256) if observation.sha256 else None,
+                        file_size_bytes=observation.size_bytes,
+                        file_owner=observation.owner,
+                        file_permissions=observation.file_permissions,
+                        mime_type=observation.mime_type,
+                        scanner_version=PhpMalwareScanner.VERSION,
+                        detection_rule_id=(
+                            ",".join(observation.matched_rule_ids)
+                            if observation.matched_rule_ids
+                            else None
+                        ),
                     )
                 )
                 events_raised += 1

@@ -8,6 +8,7 @@ from sentinel.domain.forensics.entities import TempFileObservation
 from sentinel.domain.forensics.value_objects import TempFileVerdict
 from sentinel.domain.shared.entity import utcnow
 from sentinel.domain.shared.value_objects import AbsoluteFilePath, Severity, Sha256Hash
+from sentinel.infrastructure.heuristics.php_malware_scanner import PhpMalwareScanner
 
 _HASH = "a" * 64
 
@@ -31,6 +32,9 @@ class FakeTempFileObservationRepository:
     async def get_by_path(self, absolute_path: str) -> TempFileObservation | None:
         return next((o for o in self.by_id.values() if str(o.absolute_path) == absolute_path), None)
 
+    async def count_by_verdict(self, verdict: TempFileVerdict) -> int:
+        return len([o for o in self.by_id.values() if o.verdict == verdict])
+
 
 class FakeSecurityEventRepository:
     def __init__(self) -> None:
@@ -51,6 +55,12 @@ class FakeSecurityEventRepository:
     async def list_unprocessed(self, *, limit: int = 200) -> list[SecurityEvent]:
         return [e for e in self.by_id.values() if e.processed_at is None][:limit]
 
+    async def count_total(self) -> int:
+        return len(self.by_id)
+
+    async def count_unprocessed(self) -> int:
+        return len([e for e in self.by_id.values() if e.processed_at is None])
+
 
 class FakeTempFileScanner:
     def __init__(self, observations: list[TempFileObservation]) -> None:
@@ -66,6 +76,7 @@ def _observation(
     verdict: TempFileVerdict,
     rule_ids: tuple[str, ...] = (),
     account_id: UUID | None = None,
+    server_id: UUID | None = None,
 ) -> TempFileObservation:
     return TempFileObservation(
         absolute_path=AbsoluteFilePath(value=path),
@@ -78,16 +89,21 @@ def _observation(
         process=None,
         account_id=account_id,
         detected_at=utcnow(),
+        file_permissions="644",
+        mime_type="application/x-php",
+        server_id=server_id,
     )
 
 
 async def test_malicious_observation_is_persisted_and_raises_event() -> None:
     account_id = uuid4()
+    server_id = uuid4()
     observation = _observation(
         "/tmp/update_abc.php",
         verdict=TempFileVerdict.MALICIOUS,
         rule_ids=("webshell-signature",),
         account_id=account_id,
+        server_id=server_id,
     )
     observations = FakeTempFileObservationRepository()
     events = FakeSecurityEventRepository()
@@ -108,6 +124,18 @@ async def test_malicious_observation_is_persisted_and_raises_event() -> None:
     assert event.account_id == account_id
     assert event.severity == Severity.CRITICAL
     assert event.payload["matched_rule_ids"] == ["webshell-signature"]
+
+    # Forensic metadata, promoted to real columns for the future Security
+    # Intelligence Engine to query without unpacking JSON payloads.
+    assert event.server_id == server_id
+    assert event.file_path == "/tmp/update_abc.php"
+    assert event.sha256 == _HASH
+    assert event.file_size_bytes == 42
+    assert event.file_owner == "examplebob"
+    assert event.file_permissions == "644"
+    assert event.mime_type == "application/x-php"
+    assert event.scanner_version == PhpMalwareScanner.VERSION
+    assert event.detection_rule_id == "webshell-signature"
 
 
 async def test_legitimate_observation_is_persisted_without_event() -> None:

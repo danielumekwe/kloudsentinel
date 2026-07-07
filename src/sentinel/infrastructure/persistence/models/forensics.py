@@ -26,5 +26,10 @@ class TempFileObservationModel(Base):
         GUID(), ForeignKey("cpanel_accounts.id", ondelete="CASCADE"), nullable=True, index=True
     )
     detected_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    file_permissions: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    mime_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    server_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("servers.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)

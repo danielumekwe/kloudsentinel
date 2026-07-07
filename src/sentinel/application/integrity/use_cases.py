@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import UUID
 
 import structlog
 
 from sentinel.domain.discovery.entities import CpanelAccount
 from sentinel.domain.discovery.ports import CpanelAccountRepository
+from sentinel.domain.events.entities import SecurityEvent
+from sentinel.domain.events.ports import SecurityEventRepository
 from sentinel.domain.integrity.entities import FileBaseline, IntegrityFinding, RemediationAction
 from sentinel.domain.integrity.ports import (
     FileBaselineRepository,
@@ -28,6 +30,7 @@ from sentinel.domain.shared.exceptions import (
     InvariantViolationError,
 )
 from sentinel.domain.shared.value_objects import RelativeFilePath, Severity, Sha256Hash
+from sentinel.infrastructure.mime import guess_mime_type
 
 logger = structlog.get_logger()
 
@@ -37,6 +40,13 @@ _SEVERITY_BY_CHANGE: dict[ChangeType, Severity] = {
     ChangeType.DELETED: Severity.HIGH,
     ChangeType.PERMISSIONS_CHANGED: Severity.MEDIUM,
 }
+
+#: Recorded on every ``SecurityEvent`` this use case raises. Not a rule-set
+#: version like ``PhpMalwareScanner.VERSION`` — integrity scanning is a
+#: hash-diff against a baseline, not a signature engine — but still worth
+#: tagging so a future change to the diffing algorithm is visible in
+#: forensic history.
+_SCANNER_VERSION = "integrity-hash-diff@1"
 
 
 @dataclass(frozen=True)
@@ -64,11 +74,13 @@ class RunIntegrityScanUseCase:
         account_repository: CpanelAccountRepository,
         baseline_repository: FileBaselineRepository,
         finding_repository: IntegrityFindingRepository,
+        event_repository: SecurityEventRepository,
         scanner: FileScanner,
     ) -> None:
         self._accounts = account_repository
         self._baselines = baseline_repository
         self._findings = finding_repository
+        self._events = event_repository
         self._scanner = scanner
 
     async def execute(self) -> IntegrityScanResult:
@@ -132,11 +144,13 @@ class RunIntegrityScanUseCase:
                 baselines_established += 1
                 if not is_first_scan:
                     await self._raise_finding(
-                        account.id,
+                        account,
                         scanned.relative_path,
                         change_type=ChangeType.ADDED,
                         previous_sha256=None,
                         current_sha256=scanned.sha256,
+                        size_bytes=scanned.size_bytes,
+                        mode=scanned.mode,
                         at=at,
                     )
                     findings_created += 1
@@ -149,11 +163,13 @@ class RunIntegrityScanUseCase:
                 await self._baselines.save(baseline)
                 baselines_established += 1
                 await self._raise_finding(
-                    account.id,
+                    account,
                     scanned.relative_path,
                     change_type=ChangeType.ADDED,
                     previous_sha256=None,
                     current_sha256=scanned.sha256,
+                    size_bytes=scanned.size_bytes,
+                    mode=scanned.mode,
                     at=at,
                 )
                 findings_created += 1
@@ -166,11 +182,13 @@ class RunIntegrityScanUseCase:
                 )
                 await self._baselines.save(baseline)
                 await self._raise_finding(
-                    account.id,
+                    account,
                     scanned.relative_path,
                     change_type=ChangeType.MODIFIED,
                     previous_sha256=previous_sha256,
                     current_sha256=scanned.sha256,
+                    size_bytes=scanned.size_bytes,
+                    mode=scanned.mode,
                     at=at,
                 )
                 findings_created += 1
@@ -180,11 +198,13 @@ class RunIntegrityScanUseCase:
                 )
                 await self._baselines.save(baseline)
                 await self._raise_finding(
-                    account.id,
+                    account,
                     scanned.relative_path,
                     change_type=ChangeType.PERMISSIONS_CHANGED,
                     previous_sha256=baseline.sha256,
                     current_sha256=scanned.sha256,
+                    size_bytes=scanned.size_bytes,
+                    mode=scanned.mode,
                     at=at,
                 )
                 findings_created += 1
@@ -197,11 +217,13 @@ class RunIntegrityScanUseCase:
             await self._baselines.save(baseline)
             baselines_removed += 1
             await self._raise_finding(
-                account.id,
+                account,
                 baseline.relative_path,
                 change_type=ChangeType.DELETED,
                 previous_sha256=previous_sha256,
                 current_sha256=None,
+                size_bytes=baseline.size_bytes,
+                mode=baseline.mode,
                 at=at,
             )
             findings_created += 1
@@ -210,23 +232,51 @@ class RunIntegrityScanUseCase:
 
     async def _raise_finding(
         self,
-        account_id: UUID,
+        account: CpanelAccount,
         relative_path: RelativeFilePath,
         *,
         change_type: ChangeType,
         previous_sha256: Sha256Hash | None,
         current_sha256: Sha256Hash | None,
+        size_bytes: int | None,
+        mode: str | None,
         at: datetime,
     ) -> None:
-        await self._findings.add(
-            IntegrityFinding(
-                account_id=account_id,
-                relative_path=relative_path,
-                change_type=change_type,
+        finding = IntegrityFinding(
+            account_id=account.id,
+            relative_path=relative_path,
+            change_type=change_type,
+            severity=_SEVERITY_BY_CHANGE[change_type],
+            previous_sha256=previous_sha256,
+            current_sha256=current_sha256,
+            detected_at=at,
+        )
+        await self._findings.add(finding)
+
+        current_or_previous_sha256 = current_sha256 or previous_sha256
+        await self._events.add(
+            SecurityEvent(
+                event_type=f"integrity_finding_{change_type.value.lower()}",
+                source_context="integrity",
+                account_id=account.id,
                 severity=_SEVERITY_BY_CHANGE[change_type],
-                previous_sha256=previous_sha256,
-                current_sha256=current_sha256,
-                detected_at=at,
+                payload={
+                    "relative_path": str(relative_path),
+                    "sha256": str(current_or_previous_sha256)
+                    if current_or_previous_sha256
+                    else None,
+                    "finding_id": str(finding.id),
+                },
+                occurred_at=at,
+                server_id=account.server_id,
+                file_path=str(relative_path),
+                sha256=str(current_or_previous_sha256) if current_or_previous_sha256 else None,
+                file_size_bytes=size_bytes,
+                file_owner=str(account.username),
+                file_permissions=mode,
+                mime_type=guess_mime_type(str(relative_path)),
+                scanner_version=_SCANNER_VERSION,
+                detection_rule_id=change_type.value,
             )
         )
 
@@ -325,7 +375,13 @@ class QuarantineFindingUseCase:
         self._actions = action_repository
         self._remediator = remediator
 
-    async def execute(self, finding_id: UUID) -> IntegrityFinding:
+    async def execute(self, finding_id: UUID, *, triggered_by: str = "manual") -> IntegrityFinding:
+        """``triggered_by`` is recorded as a prefix on the resulting
+        ``RemediationAction.detail`` (e.g. ``"auto: <path>"`` vs the
+        default ``"manual: <path>"``) so the audit trail — and
+        ``sentinel quarantine view`` — can tell an operator/API-triggered
+        quarantine apart from one ``AutoQuarantineCriticalFindingsUseCase``
+        performed unattended, without a schema change."""
         now = utcnow()
         finding = await _load_finding(self._findings, finding_id)
         account = await _load_account(self._accounts, finding.account_id)
@@ -338,7 +394,11 @@ class QuarantineFindingUseCase:
 
         try:
             quarantined = await self._remediator.quarantine(
-                account=account, relative_path=finding.relative_path
+                account=account,
+                relative_path=finding.relative_path,
+                detection_reason=f"{finding.change_type.value} file change",
+                severity=finding.severity,
+                detected_at=finding.detected_at,
             )
         except FileRemediationError as exc:
             await _record_remediation_action(
@@ -346,7 +406,7 @@ class QuarantineFindingUseCase:
                 finding,
                 action_type=RemediationActionType.QUARANTINE,
                 outcome=RemediationOutcome.FAILED,
-                detail=str(exc),
+                detail=f"{triggered_by}: {exc}",
                 at=now,
             )
             raise
@@ -355,6 +415,8 @@ class QuarantineFindingUseCase:
             quarantine_path=quarantined.quarantine_path,
             mode=quarantined.mode,
             size_bytes=quarantined.size_bytes,
+            owner_uid=quarantined.owner_uid,
+            owner_gid=quarantined.owner_gid,
             at=now,
         )
         await self._findings.save(finding)
@@ -371,7 +433,7 @@ class QuarantineFindingUseCase:
             finding,
             action_type=RemediationActionType.QUARANTINE,
             outcome=RemediationOutcome.SUCCEEDED,
-            detail=quarantined.quarantine_path,
+            detail=f"{triggered_by}: {quarantined.quarantine_path}",
             at=now,
         )
         return finding
@@ -419,6 +481,8 @@ class RestoreFindingUseCase:
                 relative_path=finding.relative_path,
                 quarantine_path=finding.quarantine_path,
                 mode=finding.quarantine_mode,
+                owner_uid=finding.quarantine_owner_uid,
+                owner_gid=finding.quarantine_owner_gid,
             )
         except FileRemediationError as exc:
             await _record_remediation_action(
@@ -511,3 +575,112 @@ class DeleteFindingUseCase:
             at=now,
         )
         return finding
+
+
+@dataclass(frozen=True)
+class AutoQuarantineResult:
+    accounts_examined: int
+    findings_quarantined: int
+    circuit_breaker_trips: int
+
+
+class AutoQuarantineCriticalFindingsUseCase:
+    """The single choke point deciding when a detection becomes an
+    automatic quarantine action. Deliberately narrow: only CRITICAL,
+    not-yet-remediated ``IntegrityFinding`` rows qualify — regardless of
+    which upstream detector created them (``RunIntegrityScanUseCase`` +
+    ``AnalyzeWordPressIntegrityUseCase``'s severity escalation, or
+    ``RunWordPressForensicScanUseCase``'s materialized forensic findings)
+    — and only when ``mode == "active"``. Reuses ``QuarantineFindingUseCase``
+    unchanged for the actual filesystem operation and audit trail; this
+    class only decides *whether* and *how many* to call it for, per
+    account, per run.
+
+    A circuit breaker caps how many files one account can have
+    auto-quarantined in a single run
+    (``max_per_account_per_run``). Beyond the cap, the remaining CRITICAL
+    findings for that account are left untouched (``remediation_state``
+    stays ``NONE``, safe — nothing destructive ever happens by omission)
+    and one CRITICAL ``auto_quarantine_circuit_breaker_tripped`` event is
+    raised instead of continuing to act unattended — protects against a
+    misfiring rule quarantining an entire site's files in one pass.
+    """
+
+    def __init__(
+        self,
+        *,
+        finding_repository: IntegrityFindingRepository,
+        event_repository: SecurityEventRepository,
+        quarantine_use_case: QuarantineFindingUseCase,
+        mode: str,
+        max_per_account_per_run: int,
+        lookback_minutes: int,
+    ) -> None:
+        self._findings = finding_repository
+        self._events = event_repository
+        self._quarantine = quarantine_use_case
+        self._mode = mode
+        self._max_per_account_per_run = max_per_account_per_run
+        self._lookback_minutes = lookback_minutes
+
+    async def execute(self) -> AutoQuarantineResult:
+        if self._mode != "active":
+            logger.info("auto_quarantine_skipped", mode=self._mode)
+            return AutoQuarantineResult(
+                accounts_examined=0, findings_quarantined=0, circuit_breaker_trips=0
+            )
+
+        now = utcnow()
+        since = now - timedelta(minutes=self._lookback_minutes)
+        # Already ordered oldest-first by the repository query.
+        findings = await self._findings.list_critical_unremediated(since, limit=500)
+
+        by_account: dict[UUID, list[IntegrityFinding]] = {}
+        for finding in findings:
+            by_account.setdefault(finding.account_id, []).append(finding)
+
+        findings_quarantined = 0
+        circuit_breaker_trips = 0
+        for account_id, account_findings in by_account.items():
+            to_quarantine = account_findings[: self._max_per_account_per_run]
+            remaining = len(account_findings) - len(to_quarantine)
+
+            for finding in to_quarantine:
+                try:
+                    await self._quarantine.execute(finding.id, triggered_by="auto")
+                except (FileRemediationError, InvariantViolationError, EntityNotFoundError):
+                    # Already logged and audited by QuarantineFindingUseCase
+                    # itself — one failure shouldn't stop the rest of this
+                    # run from acting on other, unrelated findings.
+                    continue
+                findings_quarantined += 1
+
+            if remaining > 0:
+                circuit_breaker_trips += 1
+                await self._events.add(
+                    SecurityEvent(
+                        event_type="auto_quarantine_circuit_breaker_tripped",
+                        source_context="integrity",
+                        account_id=account_id,
+                        severity=Severity.CRITICAL,
+                        payload={
+                            "quarantined_this_run": len(to_quarantine),
+                            "remaining_unremediated": remaining,
+                            "max_per_account_per_run": self._max_per_account_per_run,
+                        },
+                        occurred_at=now,
+                        detection_rule_id="auto-quarantine-circuit-breaker",
+                    )
+                )
+
+        logger.info(
+            "auto_quarantine_completed",
+            accounts_examined=len(by_account),
+            findings_quarantined=findings_quarantined,
+            circuit_breaker_trips=circuit_breaker_trips,
+        )
+        return AutoQuarantineResult(
+            accounts_examined=len(by_account),
+            findings_quarantined=findings_quarantined,
+            circuit_breaker_trips=circuit_breaker_trips,
+        )

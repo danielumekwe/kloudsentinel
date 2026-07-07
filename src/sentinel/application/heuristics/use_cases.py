@@ -5,6 +5,7 @@ from pathlib import Path
 
 from sentinel.domain.heuristics.ports import HeuristicScanner
 from sentinel.domain.heuristics.value_objects import HeuristicMatch
+from sentinel.domain.shared.entity import utcnow
 from sentinel.domain.shared.exceptions import FileRemediationError
 from sentinel.domain.shared.value_objects import RelativeFilePath, Severity
 from sentinel.infrastructure.filesystem.local_file_remediator import LocalFileRemediator
@@ -52,19 +53,24 @@ class QuarantineArchiveFindingsUseCase:
     async def execute(
         self, findings: list[HeuristicMatch], *, min_severity: Severity
     ) -> list[QuarantineAttempt]:
-        qualifying_paths = sorted(
-            {
-                str(match.relative_path)
-                for match in findings
-                if match.severity.rank >= min_severity.rank
-            }
-        )
+        # ``findings`` arrives sorted by severity descending (see
+        # ``ScanArchiveUseCase.execute``), so the first match kept per path
+        # via ``setdefault`` is that path's highest-severity match — the one
+        # worth recording as the quarantine's detection reason.
+        matches_by_path: dict[str, HeuristicMatch] = {}
+        for match in findings:
+            if match.severity.rank >= min_severity.rank:
+                matches_by_path.setdefault(str(match.relative_path), match)
 
         attempts: list[QuarantineAttempt] = []
-        for relative_path in qualifying_paths:
+        for relative_path in sorted(matches_by_path):
+            match = matches_by_path[relative_path]
             try:
                 quarantined = await self._remediator.quarantine(
-                    relative_path=RelativeFilePath(value=relative_path)
+                    relative_path=RelativeFilePath(value=relative_path),
+                    detection_reason=f"{match.rule_id}: {match.description}",
+                    severity=match.severity,
+                    detected_at=utcnow(),
                 )
             except FileRemediationError as exc:
                 attempts.append(

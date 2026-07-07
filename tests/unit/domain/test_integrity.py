@@ -84,18 +84,54 @@ def test_finding_acknowledge_sets_flag_and_touches() -> None:
     assert finding.updated_at >= original_updated_at
 
 
+def test_finding_escalate_severity_raises_and_touches() -> None:
+    finding = _finding()
+    assert finding.severity is Severity.HIGH
+    original_updated_at = finding.updated_at
+
+    finding.escalate_severity(Severity.CRITICAL, at=utcnow())
+
+    assert finding.severity is Severity.CRITICAL
+    assert finding.updated_at >= original_updated_at
+
+
+def test_finding_escalate_severity_rejects_same_severity() -> None:
+    finding = _finding()
+
+    with pytest.raises(InvariantViolationError):
+        finding.escalate_severity(Severity.HIGH, at=utcnow())
+
+    assert finding.severity is Severity.HIGH
+
+
+def test_finding_escalate_severity_rejects_downgrade() -> None:
+    finding = _finding()
+
+    with pytest.raises(InvariantViolationError):
+        finding.escalate_severity(Severity.MEDIUM, at=utcnow())
+
+    assert finding.severity is Severity.HIGH
+
+
 def test_finding_quarantine_sets_state_and_fields() -> None:
     finding = _finding()
     at = utcnow()
 
     finding.quarantine(
-        quarantine_path="/var/sentinel/quarantine/x/y", mode="644", size_bytes=10, at=at
+        quarantine_path="/var/lib/sentinel/quarantine/x/y",
+        mode="644",
+        size_bytes=10,
+        owner_uid=1000,
+        owner_gid=1000,
+        at=at,
     )
 
     assert finding.remediation_state is RemediationState.QUARANTINED
-    assert finding.quarantine_path == "/var/sentinel/quarantine/x/y"
+    assert finding.quarantine_path == "/var/lib/sentinel/quarantine/x/y"
     assert finding.quarantine_mode == "644"
     assert finding.quarantine_size_bytes == 10
+    assert finding.quarantine_owner_uid == 1000
+    assert finding.quarantine_owner_gid == 1000
 
 
 def test_finding_quarantine_rejects_deleted_change_type() -> None:
@@ -107,15 +143,36 @@ def test_finding_quarantine_rejects_deleted_change_type() -> None:
 
 def test_finding_quarantine_rejects_already_quarantined() -> None:
     finding = _finding()
-    finding.quarantine(quarantine_path="/q/path", mode="644", size_bytes=10, at=utcnow())
+    finding.quarantine(
+        quarantine_path="/q/path",
+        mode="644",
+        size_bytes=10,
+        owner_uid=1000,
+        owner_gid=1000,
+        at=utcnow(),
+    )
 
     with pytest.raises(InvariantViolationError):
-        finding.quarantine(quarantine_path="/q/path2", mode="644", size_bytes=10, at=utcnow())
+        finding.quarantine(
+            quarantine_path="/q/path2",
+            mode="644",
+            size_bytes=10,
+            owner_uid=1000,
+            owner_gid=1000,
+            at=utcnow(),
+        )
 
 
 def test_finding_restore_clears_quarantine_fields() -> None:
     finding = _finding()
-    finding.quarantine(quarantine_path="/q/path", mode="644", size_bytes=10, at=utcnow())
+    finding.quarantine(
+        quarantine_path="/q/path",
+        mode="644",
+        size_bytes=10,
+        owner_uid=1000,
+        owner_gid=1000,
+        at=utcnow(),
+    )
 
     finding.restore(at=utcnow())
 
@@ -123,6 +180,8 @@ def test_finding_restore_clears_quarantine_fields() -> None:
     assert finding.quarantine_path is None
     assert finding.quarantine_mode is None
     assert finding.quarantine_size_bytes is None
+    assert finding.quarantine_owner_uid is None
+    assert finding.quarantine_owner_gid is None
 
 
 def test_finding_restore_requires_quarantined_state() -> None:
@@ -134,12 +193,21 @@ def test_finding_restore_requires_quarantined_state() -> None:
 
 def test_finding_delete_clears_quarantine_fields() -> None:
     finding = _finding()
-    finding.quarantine(quarantine_path="/q/path", mode="644", size_bytes=10, at=utcnow())
+    finding.quarantine(
+        quarantine_path="/q/path",
+        mode="644",
+        size_bytes=10,
+        owner_uid=1000,
+        owner_gid=1000,
+        at=utcnow(),
+    )
 
     finding.delete(at=utcnow())
 
     assert finding.remediation_state is RemediationState.DELETED
     assert finding.quarantine_path is None
+    assert finding.quarantine_owner_uid is None
+    assert finding.quarantine_owner_gid is None
 
 
 def test_finding_delete_requires_quarantined_state() -> None:
@@ -151,7 +219,14 @@ def test_finding_delete_requires_quarantined_state() -> None:
 
 def test_finding_delete_rejects_after_restore() -> None:
     finding = _finding()
-    finding.quarantine(quarantine_path="/q/path", mode="644", size_bytes=10, at=utcnow())
+    finding.quarantine(
+        quarantine_path="/q/path",
+        mode="644",
+        size_bytes=10,
+        owner_uid=1000,
+        owner_gid=1000,
+        at=utcnow(),
+    )
     finding.restore(at=utcnow())
 
     with pytest.raises(InvariantViolationError):

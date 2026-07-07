@@ -51,10 +51,13 @@ class ScannedFile(ValueObject):
 
 @dataclass(frozen=True, kw_only=True)
 class QuarantinedFile(ValueObject):
-    """Result of a ``FileRemediator.quarantine()`` call: where the file now
-    lives, and the mode/size it had at the moment it was moved, so a later
-    restore can put it back exactly as it was."""
+    """Result of a ``FileRemediator.quarantine()`` call: where the file's
+    incident folder now lives, and the mode/size/ownership it had at the
+    moment it was moved, so a later restore can put it back exactly as it
+    was."""
 
     quarantine_path: str
     mode: str
     size_bytes: int
+    owner_uid: int
+    owner_gid: int

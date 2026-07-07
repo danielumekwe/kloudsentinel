@@ -51,3 +51,4 @@ class DiscoveredWordPressInstallation(ValueObject):
     domain: DomainName | None
     wp_version: str | None
     is_multisite: bool
+    php_version: str | None = None

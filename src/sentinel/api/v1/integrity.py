@@ -12,6 +12,7 @@ from sentinel.api.dependencies import (
     ListRemediationActions,
     QuarantineFinding,
     RequireApiKey,
+    RequireMutationsAllowed,
     RestoreFinding,
 )
 from sentinel.api.pagination import decode_cursor, encode_cursor
@@ -112,6 +113,7 @@ async def acknowledge_finding(
 async def quarantine_finding(
     request: Request,
     _: RequireApiKey,
+    __: RequireMutationsAllowed,
     finding_id: UUID,
     use_case: QuarantineFinding,
 ) -> Envelope[IntegrityFindingResponse]:
@@ -135,6 +137,7 @@ async def quarantine_finding(
 async def restore_finding(
     request: Request,
     _: RequireApiKey,
+    __: RequireMutationsAllowed,
     finding_id: UUID,
     use_case: RestoreFinding,
 ) -> Envelope[IntegrityFindingResponse]:
@@ -158,6 +161,7 @@ async def restore_finding(
 async def delete_finding(
     request: Request,
     _: RequireApiKey,
+    __: RequireMutationsAllowed,
     finding_id: UUID,
     use_case: DeleteFinding,
 ) -> Envelope[IntegrityFindingResponse]:

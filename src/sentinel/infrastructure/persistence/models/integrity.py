@@ -45,6 +45,8 @@ class IntegrityFindingModel(Base):
     quarantine_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     quarantine_mode: Mapped[str | None] = mapped_column(String(4), nullable=True)
     quarantine_size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    quarantine_owner_uid: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    quarantine_owner_gid: Mapped[int | None] = mapped_column(Integer, nullable=True)
     detected_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)

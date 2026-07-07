@@ -10,6 +10,7 @@ from sentinel.api.v1 import (
     intelligence,
     inventory,
     monitoring,
+    wordpress,
 )
 
 api_router = APIRouter(prefix="/api/v1")
@@ -20,3 +21,4 @@ api_router.include_router(integrity.router)
 api_router.include_router(inventory.router)
 api_router.include_router(monitoring.router)
 api_router.include_router(intelligence.router)
+api_router.include_router(wordpress.router)

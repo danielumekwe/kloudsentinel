@@ -54,5 +54,6 @@ class WordPressInstallationModel(Base):
     is_multisite: Mapped[bool] = mapped_column(Boolean, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    php_version: Mapped[str | None] = mapped_column(String(16), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)

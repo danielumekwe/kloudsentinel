@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
 
 from sentinel.application.integrity.use_cases import (
+    AutoQuarantineCriticalFindingsUseCase,
     DeleteFindingUseCase,
     QuarantineFindingUseCase,
     RestoreFindingUseCase,
@@ -12,6 +14,7 @@ from sentinel.application.integrity.use_cases import (
 )
 from sentinel.domain.discovery.entities import CpanelAccount
 from sentinel.domain.discovery.value_objects import LinuxUsername
+from sentinel.domain.events.entities import SecurityEvent
 from sentinel.domain.integrity.entities import FileBaseline, IntegrityFinding, RemediationAction
 from sentinel.domain.integrity.value_objects import (
     ChangeType,
@@ -115,6 +118,55 @@ class FakeIntegrityFindingRepository:
     ) -> list[IntegrityFinding]:
         return [f for f in self.by_id.values() if not f.is_acknowledged][offset : offset + limit]
 
+    async def count_total(self) -> int:
+        return len(self.by_id)
+
+    async def list_since(self, since: datetime, *, limit: int = 500) -> list[IntegrityFinding]:
+        return [f for f in self.by_id.values() if f.detected_at >= since][:limit]
+
+    async def list_by_remediation_state(
+        self, state: RemediationState, *, limit: int = 200
+    ) -> list[IntegrityFinding]:
+        return [f for f in self.by_id.values() if f.remediation_state == state][:limit]
+
+    async def list_critical_unremediated(
+        self, since: datetime, *, limit: int = 500
+    ) -> list[IntegrityFinding]:
+        matching = [
+            f
+            for f in self.by_id.values()
+            if f.severity is Severity.CRITICAL
+            and f.remediation_state is RemediationState.NONE
+            and f.detected_at >= since
+        ]
+        return sorted(matching, key=lambda f: f.detected_at)[:limit]
+
+
+class FakeSecurityEventRepository:
+    def __init__(self) -> None:
+        self.by_id: dict[UUID, SecurityEvent] = {}
+
+    async def add(self, entity: SecurityEvent) -> None:
+        self.by_id[entity.id] = entity
+
+    async def save(self, entity: SecurityEvent) -> None:
+        self.by_id[entity.id] = entity
+
+    async def get(self, entity_id: UUID) -> SecurityEvent | None:
+        return self.by_id.get(entity_id)
+
+    async def list(self, *, limit: int = 50, offset: int = 0) -> list[SecurityEvent]:
+        return list(self.by_id.values())[offset : offset + limit]
+
+    async def list_unprocessed(self, *, limit: int = 200) -> list[SecurityEvent]:
+        return [e for e in self.by_id.values() if e.processed_at is None][:limit]
+
+    async def count_total(self) -> int:
+        return len(self.by_id)
+
+    async def count_unprocessed(self) -> int:
+        return len([e for e in self.by_id.values() if e.processed_at is None])
+
 
 class FakeFileScanner:
     def __init__(self, by_account_id: dict[UUID, list[ScannedFile]]) -> None:
@@ -155,14 +207,22 @@ class FakeFileRemediator:
         self.purge_calls: list[str] = []
 
     async def quarantine(
-        self, *, account: CpanelAccount, relative_path: RelativeFilePath
+        self,
+        *,
+        account: CpanelAccount,
+        relative_path: RelativeFilePath,
+        detection_reason: str,
+        severity: Severity,
+        detected_at: datetime,
     ) -> QuarantinedFile:
         if self.fail:
             raise FileRemediationError("simulated quarantine failure")
         return QuarantinedFile(
-            quarantine_path=f"/var/sentinel/quarantine/{account.username}/{relative_path}",
+            quarantine_path=f"/var/lib/sentinel/quarantine/{account.username}/{relative_path}",
             mode="644",
             size_bytes=100,
+            owner_uid=1000,
+            owner_gid=1000,
         )
 
     async def restore(
@@ -172,6 +232,8 @@ class FakeFileRemediator:
         relative_path: RelativeFilePath,
         quarantine_path: str,
         mode: str,
+        owner_uid: int | None,
+        owner_gid: int | None,
     ) -> None:
         if self.fail:
             raise FileRemediationError("simulated restore failure")
@@ -205,15 +267,22 @@ def _scanned_file(
     )
 
 
-def _finding(account_id: UUID, *, change_type: ChangeType = ChangeType.ADDED) -> IntegrityFinding:
+def _finding(
+    account_id: UUID,
+    *,
+    change_type: ChangeType = ChangeType.ADDED,
+    severity: Severity = Severity.MEDIUM,
+    relative_path: str = "public_html/shell.php",
+    detected_at: datetime | None = None,
+) -> IntegrityFinding:
     return IntegrityFinding(
         account_id=account_id,
-        relative_path=RelativeFilePath(value="public_html/shell.php"),
+        relative_path=RelativeFilePath(value=relative_path),
         change_type=change_type,
-        severity=Severity.MEDIUM,
+        severity=severity,
         previous_sha256=None,
         current_sha256=Sha256Hash(value=_HASH_B),
-        detected_at=utcnow(),
+        detected_at=detected_at or utcnow(),
     )
 
 
@@ -222,12 +291,14 @@ async def test_first_scan_establishes_baselines_without_findings() -> None:
     accounts = FakeCpanelAccountRepository([account])
     baselines = FakeFileBaselineRepository()
     findings = FakeIntegrityFindingRepository()
+    events = FakeSecurityEventRepository()
     scanner = FakeFileScanner({account.id: [_scanned_file("public_html/index.php", _HASH_A)]})
 
     use_case = RunIntegrityScanUseCase(
         account_repository=accounts,
         baseline_repository=baselines,
         finding_repository=findings,
+        event_repository=events,
         scanner=scanner,
     )
 
@@ -253,12 +324,14 @@ async def test_unchanged_file_is_a_no_op() -> None:
     accounts = FakeCpanelAccountRepository([account])
     baselines = FakeFileBaselineRepository([existing])
     findings = FakeIntegrityFindingRepository()
+    events = FakeSecurityEventRepository()
     scanner = FakeFileScanner({account.id: [_scanned_file("public_html/index.php", _HASH_A)]})
 
     use_case = RunIntegrityScanUseCase(
         account_repository=accounts,
         baseline_repository=baselines,
         finding_repository=findings,
+        event_repository=events,
         scanner=scanner,
     )
 
@@ -282,12 +355,14 @@ async def test_modified_file_creates_high_severity_finding() -> None:
     accounts = FakeCpanelAccountRepository([account])
     baselines = FakeFileBaselineRepository([existing])
     findings = FakeIntegrityFindingRepository()
+    events = FakeSecurityEventRepository()
     scanner = FakeFileScanner({account.id: [_scanned_file("public_html/index.php", _HASH_B)]})
 
     use_case = RunIntegrityScanUseCase(
         account_repository=accounts,
         baseline_repository=baselines,
         finding_repository=findings,
+        event_repository=events,
         scanner=scanner,
     )
 
@@ -301,6 +376,23 @@ async def test_modified_file_creates_high_severity_finding() -> None:
     assert str(finding.current_sha256) == _HASH_B
     (baseline,) = baselines.by_id.values()
     assert str(baseline.sha256) == _HASH_B
+
+    (event,) = events.by_id.values()
+    assert event.event_type == "integrity_finding_modified"
+    assert event.source_context == "integrity"
+    assert event.account_id == account.id
+    assert event.severity == Severity.HIGH
+    assert event.payload["finding_id"] == str(finding.id)
+    assert event.server_id == account.server_id
+    assert event.file_path == "public_html/index.php"
+    assert event.sha256 == _HASH_B
+    assert event.file_size_bytes == 100
+    assert event.file_owner == str(account.username)
+    assert event.file_permissions == "644"
+    # `.php` has no registered MIME type in Python's stdlib `mimetypes` table.
+    assert event.mime_type is None
+    assert event.scanner_version == "integrity-hash-diff@1"
+    assert event.detection_rule_id == "MODIFIED"
 
 
 async def test_new_file_on_already_baselined_account_creates_medium_added_finding() -> None:
@@ -316,6 +408,7 @@ async def test_new_file_on_already_baselined_account_creates_medium_added_findin
     accounts = FakeCpanelAccountRepository([account])
     baselines = FakeFileBaselineRepository([existing])
     findings = FakeIntegrityFindingRepository()
+    events = FakeSecurityEventRepository()
     scanner = FakeFileScanner(
         {
             account.id: [
@@ -329,6 +422,7 @@ async def test_new_file_on_already_baselined_account_creates_medium_added_findin
         account_repository=accounts,
         baseline_repository=baselines,
         finding_repository=findings,
+        event_repository=events,
         scanner=scanner,
     )
 
@@ -355,12 +449,14 @@ async def test_removed_file_creates_high_deleted_finding_and_deactivates_baselin
     accounts = FakeCpanelAccountRepository([account])
     baselines = FakeFileBaselineRepository([existing])
     findings = FakeIntegrityFindingRepository()
+    events = FakeSecurityEventRepository()
     scanner = FakeFileScanner({account.id: []})
 
     use_case = RunIntegrityScanUseCase(
         account_repository=accounts,
         baseline_repository=baselines,
         finding_repository=findings,
+        event_repository=events,
         scanner=scanner,
     )
 
@@ -389,6 +485,7 @@ async def test_permission_only_change_creates_medium_finding() -> None:
     accounts = FakeCpanelAccountRepository([account])
     baselines = FakeFileBaselineRepository([existing])
     findings = FakeIntegrityFindingRepository()
+    events = FakeSecurityEventRepository()
     scanner = FakeFileScanner(
         {account.id: [_scanned_file("public_html/wp-config.php", _HASH_A, mode="666")]}
     )
@@ -397,6 +494,7 @@ async def test_permission_only_change_creates_medium_finding() -> None:
         account_repository=accounts,
         baseline_repository=baselines,
         finding_repository=findings,
+        event_repository=events,
         scanner=scanner,
     )
 
@@ -415,12 +513,14 @@ async def test_inactive_accounts_are_skipped() -> None:
     accounts = FakeCpanelAccountRepository([account])
     baselines = FakeFileBaselineRepository()
     findings = FakeIntegrityFindingRepository()
+    events = FakeSecurityEventRepository()
     scanner = FakeFileScanner({account.id: [_scanned_file("public_html/index.php", _HASH_A)]})
 
     use_case = RunIntegrityScanUseCase(
         account_repository=accounts,
         baseline_repository=baselines,
         finding_repository=findings,
+        event_repository=events,
         scanner=scanner,
     )
 
@@ -444,12 +544,14 @@ async def test_reappeared_file_reactivates_baseline_instead_of_duplicating() -> 
     accounts = FakeCpanelAccountRepository([account])
     baselines = FakeFileBaselineRepository([removed])
     findings = FakeIntegrityFindingRepository()
+    events = FakeSecurityEventRepository()
     scanner = FakeFileScanner({account.id: [_scanned_file("public_html/index.php", _HASH_B)]})
 
     use_case = RunIntegrityScanUseCase(
         account_repository=accounts,
         baseline_repository=baselines,
         finding_repository=findings,
+        event_repository=events,
         scanner=scanner,
     )
 
@@ -578,7 +680,14 @@ async def test_quarantine_use_case_records_failed_action_on_remediation_error() 
 async def test_restore_use_case_records_failed_action_on_remediation_error() -> None:
     account = _account()
     finding = _finding(account.id)
-    finding.quarantine(quarantine_path="/quarantine/x", mode="644", size_bytes=100, at=utcnow())
+    finding.quarantine(
+        quarantine_path="/quarantine/x",
+        mode="644",
+        size_bytes=100,
+        owner_uid=1000,
+        owner_gid=1000,
+        at=utcnow(),
+    )
     accounts = FakeCpanelAccountRepository([account])
     findings = FakeIntegrityFindingRepository()
     findings.by_id[finding.id] = finding
@@ -604,7 +713,14 @@ async def test_restore_use_case_records_failed_action_on_remediation_error() -> 
 async def test_restore_use_case_reactivates_baseline_and_clears_quarantine() -> None:
     account = _account()
     finding = _finding(account.id)
-    finding.quarantine(quarantine_path="/quarantine/x", mode="644", size_bytes=100, at=utcnow())
+    finding.quarantine(
+        quarantine_path="/quarantine/x",
+        mode="644",
+        size_bytes=100,
+        owner_uid=1000,
+        owner_gid=1000,
+        at=utcnow(),
+    )
     baseline = FileBaseline(
         account_id=account.id,
         relative_path=finding.relative_path,
@@ -661,7 +777,14 @@ async def test_restore_use_case_requires_quarantined_state() -> None:
 async def test_delete_use_case_records_failed_action_on_remediation_error() -> None:
     account = _account()
     finding = _finding(account.id)
-    finding.quarantine(quarantine_path="/quarantine/x", mode="644", size_bytes=100, at=utcnow())
+    finding.quarantine(
+        quarantine_path="/quarantine/x",
+        mode="644",
+        size_bytes=100,
+        owner_uid=1000,
+        owner_gid=1000,
+        at=utcnow(),
+    )
     findings = FakeIntegrityFindingRepository()
     findings.by_id[finding.id] = finding
     actions = FakeRemediationActionRepository()
@@ -684,7 +807,14 @@ async def test_delete_use_case_records_failed_action_on_remediation_error() -> N
 async def test_delete_use_case_purges_quarantined_file() -> None:
     account = _account()
     finding = _finding(account.id)
-    finding.quarantine(quarantine_path="/quarantine/x", mode="644", size_bytes=100, at=utcnow())
+    finding.quarantine(
+        quarantine_path="/quarantine/x",
+        mode="644",
+        size_bytes=100,
+        owner_uid=1000,
+        owner_gid=1000,
+        at=utcnow(),
+    )
     findings = FakeIntegrityFindingRepository()
     findings.by_id[finding.id] = finding
     actions = FakeRemediationActionRepository()
@@ -719,3 +849,224 @@ async def test_delete_use_case_requires_quarantined_state() -> None:
 
     with pytest.raises(InvariantViolationError):
         await use_case.execute(finding.id)
+
+
+def _quarantine_use_case(
+    *,
+    findings: FakeIntegrityFindingRepository,
+    accounts: FakeCpanelAccountRepository,
+    actions: FakeRemediationActionRepository,
+    remediator: FakeFileRemediator | None = None,
+) -> QuarantineFindingUseCase:
+    return QuarantineFindingUseCase(
+        finding_repository=findings,
+        account_repository=accounts,
+        baseline_repository=FakeFileBaselineRepository(),
+        action_repository=actions,
+        remediator=remediator or FakeFileRemediator(),
+    )
+
+
+async def test_auto_quarantine_skipped_when_mode_not_active() -> None:
+    account = _account()
+    finding = _finding(account.id, severity=Severity.CRITICAL)
+    findings = FakeIntegrityFindingRepository()
+    findings.by_id[finding.id] = finding
+    accounts = FakeCpanelAccountRepository([account])
+    actions = FakeRemediationActionRepository()
+    events = FakeSecurityEventRepository()
+
+    use_case = AutoQuarantineCriticalFindingsUseCase(
+        finding_repository=findings,
+        event_repository=events,
+        quarantine_use_case=_quarantine_use_case(
+            findings=findings, accounts=accounts, actions=actions
+        ),
+        mode="manual",
+        max_per_account_per_run=5,
+        lookback_minutes=60,
+    )
+
+    result = await use_case.execute()
+
+    assert result.findings_quarantined == 0
+    assert result.accounts_examined == 0
+    assert finding.remediation_state == RemediationState.NONE
+    assert events.by_id == {}
+
+
+async def test_auto_quarantine_quarantines_critical_findings_in_active_mode() -> None:
+    account = _account()
+    finding_a = _finding(account.id, severity=Severity.CRITICAL, relative_path="public_html/a.php")
+    finding_b = _finding(account.id, severity=Severity.CRITICAL, relative_path="public_html/b.php")
+    findings = FakeIntegrityFindingRepository()
+    findings.by_id[finding_a.id] = finding_a
+    findings.by_id[finding_b.id] = finding_b
+    accounts = FakeCpanelAccountRepository([account])
+    actions = FakeRemediationActionRepository()
+    events = FakeSecurityEventRepository()
+
+    use_case = AutoQuarantineCriticalFindingsUseCase(
+        finding_repository=findings,
+        event_repository=events,
+        quarantine_use_case=_quarantine_use_case(
+            findings=findings, accounts=accounts, actions=actions
+        ),
+        mode="active",
+        max_per_account_per_run=5,
+        lookback_minutes=60,
+    )
+
+    result = await use_case.execute()
+
+    assert result.findings_quarantined == 2
+    assert result.accounts_examined == 1
+    assert result.circuit_breaker_trips == 0
+    assert finding_a.remediation_state == RemediationState.QUARANTINED
+    assert finding_b.remediation_state == RemediationState.QUARANTINED
+    assert all(
+        action.detail is not None and action.detail.startswith("auto:")
+        for action in actions.by_id.values()
+    )
+    assert events.by_id == {}
+
+
+async def test_auto_quarantine_ignores_non_critical_findings() -> None:
+    account = _account()
+    finding = _finding(account.id, severity=Severity.HIGH)
+    findings = FakeIntegrityFindingRepository()
+    findings.by_id[finding.id] = finding
+    accounts = FakeCpanelAccountRepository([account])
+    actions = FakeRemediationActionRepository()
+
+    use_case = AutoQuarantineCriticalFindingsUseCase(
+        finding_repository=findings,
+        event_repository=FakeSecurityEventRepository(),
+        quarantine_use_case=_quarantine_use_case(
+            findings=findings, accounts=accounts, actions=actions
+        ),
+        mode="active",
+        max_per_account_per_run=5,
+        lookback_minutes=60,
+    )
+
+    result = await use_case.execute()
+
+    assert result.findings_quarantined == 0
+    assert finding.remediation_state == RemediationState.NONE
+
+
+async def test_auto_quarantine_circuit_breaker_caps_per_account_and_raises_event() -> None:
+    account = _account()
+    now = utcnow()
+    critical_findings = [
+        _finding(
+            account.id,
+            severity=Severity.CRITICAL,
+            relative_path=f"public_html/shell{i}.php",
+            detected_at=now - timedelta(minutes=10 - i),
+        )
+        for i in range(3)
+    ]
+    findings = FakeIntegrityFindingRepository()
+    for finding in critical_findings:
+        findings.by_id[finding.id] = finding
+    accounts = FakeCpanelAccountRepository([account])
+    actions = FakeRemediationActionRepository()
+    events = FakeSecurityEventRepository()
+
+    use_case = AutoQuarantineCriticalFindingsUseCase(
+        finding_repository=findings,
+        event_repository=events,
+        quarantine_use_case=_quarantine_use_case(
+            findings=findings, accounts=accounts, actions=actions
+        ),
+        mode="active",
+        max_per_account_per_run=2,
+        lookback_minutes=60,
+    )
+
+    result = await use_case.execute()
+
+    assert result.findings_quarantined == 2
+    assert result.circuit_breaker_trips == 1
+    quarantined = [
+        f for f in critical_findings if f.remediation_state == RemediationState.QUARANTINED
+    ]
+    untouched = [f for f in critical_findings if f.remediation_state == RemediationState.NONE]
+    assert len(quarantined) == 2
+    assert len(untouched) == 1
+    # Oldest-first: the two oldest (i=0, i=1) get quarantined, the newest is left.
+    assert untouched[0].relative_path == critical_findings[2].relative_path
+
+    (event,) = events.by_id.values()
+    assert event.event_type == "auto_quarantine_circuit_breaker_tripped"
+    assert event.severity == Severity.CRITICAL
+    assert event.account_id == account.id
+    assert event.payload["quarantined_this_run"] == 2
+    assert event.payload["remaining_unremediated"] == 1
+    assert event.payload["max_per_account_per_run"] == 2
+
+
+async def test_auto_quarantine_processes_multiple_accounts_independently() -> None:
+    account_a = _account()
+    account_b = _account()
+    finding_a = _finding(
+        account_a.id, severity=Severity.CRITICAL, relative_path="public_html/a.php"
+    )
+    finding_b = _finding(
+        account_b.id, severity=Severity.CRITICAL, relative_path="public_html/b.php"
+    )
+    findings = FakeIntegrityFindingRepository()
+    findings.by_id[finding_a.id] = finding_a
+    findings.by_id[finding_b.id] = finding_b
+    accounts = FakeCpanelAccountRepository([account_a, account_b])
+    actions = FakeRemediationActionRepository()
+
+    use_case = AutoQuarantineCriticalFindingsUseCase(
+        finding_repository=findings,
+        event_repository=FakeSecurityEventRepository(),
+        quarantine_use_case=_quarantine_use_case(
+            findings=findings, accounts=accounts, actions=actions
+        ),
+        mode="active",
+        max_per_account_per_run=5,
+        lookback_minutes=60,
+    )
+
+    result = await use_case.execute()
+
+    assert result.accounts_examined == 2
+    assert result.findings_quarantined == 2
+    assert finding_a.remediation_state == RemediationState.QUARANTINED
+    assert finding_b.remediation_state == RemediationState.QUARANTINED
+
+
+async def test_auto_quarantine_tolerates_individual_quarantine_failure() -> None:
+    account = _account()
+    finding = _finding(account.id, severity=Severity.CRITICAL)
+    findings = FakeIntegrityFindingRepository()
+    findings.by_id[finding.id] = finding
+    accounts = FakeCpanelAccountRepository([account])
+    actions = FakeRemediationActionRepository()
+
+    use_case = AutoQuarantineCriticalFindingsUseCase(
+        finding_repository=findings,
+        event_repository=FakeSecurityEventRepository(),
+        quarantine_use_case=_quarantine_use_case(
+            findings=findings,
+            accounts=accounts,
+            actions=actions,
+            remediator=FakeFileRemediator(fail=True),
+        ),
+        mode="active",
+        max_per_account_per_run=5,
+        lookback_minutes=60,
+    )
+
+    result = await use_case.execute()
+
+    assert result.findings_quarantined == 0
+    assert finding.remediation_state == RemediationState.NONE
+    (action,) = actions.by_id.values()
+    assert action.outcome == RemediationOutcome.FAILED

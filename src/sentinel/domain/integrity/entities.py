@@ -55,9 +55,12 @@ class FileBaseline(BaseEntity):
 @dataclass(kw_only=True)
 class IntegrityFinding(BaseEntity):
     """One detected file-integrity change. Findings are immutable historical
-    records of what was observed at ``detected_at`` — ``change_type``,
-    ``severity`` and the hash fields never change after creation. What can
-    change is acknowledgement and remediation lifecycle state, tracked via
+    records of what was observed at ``detected_at`` — ``change_type`` and
+    the hash fields never change after creation. ``severity`` is normally
+    fixed too, with one controlled exception: ``escalate_severity`` lets a
+    later, more context-aware analysis (e.g. "this is a WordPress core
+    file") raise it, never lower it. What else can change is
+    acknowledgement and remediation lifecycle state, tracked via
     ``remediation_state``.
 
     ``remediation_state`` starts at ``NONE`` and can move to ``QUARANTINED``
@@ -78,9 +81,24 @@ class IntegrityFinding(BaseEntity):
     quarantine_path: str | None = None
     quarantine_mode: str | None = None
     quarantine_size_bytes: int | None = None
+    quarantine_owner_uid: int | None = None
+    quarantine_owner_gid: int | None = None
 
     def acknowledge(self) -> None:
         self.is_acknowledged = True
+        self.touch()
+
+    def escalate_severity(self, to: Severity, *, at: datetime) -> None:
+        """Raises ``severity``, never lowers it — a later pass with more
+        context (e.g. "this is a named WordPress core file") can decide a
+        finding was under-weighted at detection time, but should never be
+        able to make a finding look less serious than it was first
+        assessed to be."""
+        if to.rank <= self.severity.rank:
+            raise InvariantViolationError(
+                f"Finding {self.id} severity {self.severity} cannot be escalated to {to}"
+            )
+        self.severity = to
         self.touch()
 
     def ensure_can_quarantine(self) -> None:
@@ -93,12 +111,23 @@ class IntegrityFinding(BaseEntity):
                 f"Finding {self.id} has no file on disk to quarantine (change_type=DELETED)"
             )
 
-    def quarantine(self, *, quarantine_path: str, mode: str, size_bytes: int, at: datetime) -> None:
+    def quarantine(
+        self,
+        *,
+        quarantine_path: str,
+        mode: str,
+        size_bytes: int,
+        owner_uid: int,
+        owner_gid: int,
+        at: datetime,
+    ) -> None:
         self.ensure_can_quarantine()
         self.remediation_state = RemediationState.QUARANTINED
         self.quarantine_path = quarantine_path
         self.quarantine_mode = mode
         self.quarantine_size_bytes = size_bytes
+        self.quarantine_owner_uid = owner_uid
+        self.quarantine_owner_gid = owner_gid
         self.touch()
 
     def ensure_can_restore(self) -> None:
@@ -113,6 +142,8 @@ class IntegrityFinding(BaseEntity):
         self.quarantine_path = None
         self.quarantine_mode = None
         self.quarantine_size_bytes = None
+        self.quarantine_owner_uid = None
+        self.quarantine_owner_gid = None
         self.touch()
 
     def ensure_can_delete(self) -> None:
@@ -127,6 +158,8 @@ class IntegrityFinding(BaseEntity):
         self.quarantine_path = None
         self.quarantine_mode = None
         self.quarantine_size_bytes = None
+        self.quarantine_owner_uid = None
+        self.quarantine_owner_gid = None
         self.touch()
 
 

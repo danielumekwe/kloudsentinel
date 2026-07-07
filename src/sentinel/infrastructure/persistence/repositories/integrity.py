@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import builtins
+from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sentinel.domain.integrity.entities import FileBaseline, IntegrityFinding, RemediationAction
@@ -108,6 +109,8 @@ def _finding_to_entity(model: IntegrityFindingModel) -> IntegrityFinding:
         quarantine_path=model.quarantine_path,
         quarantine_mode=model.quarantine_mode,
         quarantine_size_bytes=model.quarantine_size_bytes,
+        quarantine_owner_uid=model.quarantine_owner_uid,
+        quarantine_owner_gid=model.quarantine_owner_gid,
         detected_at=model.detected_at,
         created_at=model.created_at,
         updated_at=model.updated_at,
@@ -130,6 +133,8 @@ def _finding_to_model(entity: IntegrityFinding) -> IntegrityFindingModel:
         quarantine_path=entity.quarantine_path,
         quarantine_mode=entity.quarantine_mode,
         quarantine_size_bytes=entity.quarantine_size_bytes,
+        quarantine_owner_uid=entity.quarantine_owner_uid,
+        quarantine_owner_gid=entity.quarantine_owner_gid,
         detected_at=entity.detected_at,
         created_at=entity.created_at,
         updated_at=entity.updated_at,
@@ -170,6 +175,49 @@ class SqlAlchemyIntegrityFindingRepository:
             .order_by(IntegrityFindingModel.detected_at.desc())
             .limit(limit)
             .offset(offset)
+        )
+        return [_finding_to_entity(model) for model in result.scalars()]
+
+    async def count_total(self) -> int:
+        result = await self._session.execute(
+            select(func.count()).select_from(IntegrityFindingModel)
+        )
+        return result.scalar_one()
+
+    async def list_since(
+        self, since: datetime, *, limit: int = 500
+    ) -> builtins.list[IntegrityFinding]:
+        result = await self._session.execute(
+            select(IntegrityFindingModel)
+            .where(IntegrityFindingModel.detected_at >= since)
+            .order_by(IntegrityFindingModel.detected_at.desc())
+            .limit(limit)
+        )
+        return [_finding_to_entity(model) for model in result.scalars()]
+
+    async def list_by_remediation_state(
+        self, state: RemediationState, *, limit: int = 200
+    ) -> builtins.list[IntegrityFinding]:
+        result = await self._session.execute(
+            select(IntegrityFindingModel)
+            .where(IntegrityFindingModel.remediation_state == state.value)
+            .order_by(IntegrityFindingModel.detected_at.desc())
+            .limit(limit)
+        )
+        return [_finding_to_entity(model) for model in result.scalars()]
+
+    async def list_critical_unremediated(
+        self, since: datetime, *, limit: int = 500
+    ) -> builtins.list[IntegrityFinding]:
+        result = await self._session.execute(
+            select(IntegrityFindingModel)
+            .where(
+                IntegrityFindingModel.severity == Severity.CRITICAL.value,
+                IntegrityFindingModel.remediation_state == RemediationState.NONE.value,
+                IntegrityFindingModel.detected_at >= since,
+            )
+            .order_by(IntegrityFindingModel.detected_at.asc())
+            .limit(limit)
         )
         return [_finding_to_entity(model) for model in result.scalars()]
 

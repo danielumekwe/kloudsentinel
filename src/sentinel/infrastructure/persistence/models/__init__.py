@@ -21,10 +21,14 @@ from sentinel.infrastructure.persistence.models.inventory import (
     InstalledThemeModel,
 )
 from sentinel.infrastructure.persistence.models.monitoring import ConfigurationItemModel
+from sentinel.infrastructure.persistence.models.observability import JobHeartbeatModel
+from sentinel.infrastructure.persistence.models.wordpress_integrity import CoreChecksumRecordModel
+from sentinel.infrastructure.persistence.models.wordpress_inventory import WordPressCronJobModel
 
 __all__ = [
     "ApiKeyModel",
     "ConfigurationItemModel",
+    "CoreChecksumRecordModel",
     "CpanelAccountModel",
     "FileBaselineModel",
     "IncidentAccountLinkModel",
@@ -32,10 +36,12 @@ __all__ = [
     "InstalledPluginModel",
     "InstalledThemeModel",
     "IntegrityFindingModel",
+    "JobHeartbeatModel",
     "RemediationActionModel",
     "SecurityEventModel",
     "ServerModel",
     "TempFileObservationModel",
     "ThreatTimelineEntryModel",
+    "WordPressCronJobModel",
     "WordPressInstallationModel",
 ]

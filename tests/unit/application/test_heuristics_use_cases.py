@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 from sentinel.application.heuristics.use_cases import (
@@ -36,12 +37,25 @@ class FakeLocalFileRemediator:
         self._fail_paths = fail_paths or set()
         self.quarantined_paths: list[str] = []
 
-    async def quarantine(self, *, relative_path: RelativeFilePath) -> QuarantinedFile:
+    async def quarantine(
+        self,
+        *,
+        relative_path: RelativeFilePath,
+        detection_reason: str,
+        severity: Severity,
+        detected_at: datetime,
+    ) -> QuarantinedFile:
         path = str(relative_path)
         if path in self._fail_paths:
             raise FileRemediationError(f"simulated failure for {path}")
         self.quarantined_paths.append(path)
-        return QuarantinedFile(quarantine_path=f"/quarantine/{path}", mode="644", size_bytes=10)
+        return QuarantinedFile(
+            quarantine_path=f"/quarantine/{path}",
+            mode="644",
+            size_bytes=10,
+            owner_uid=1000,
+            owner_gid=1000,
+        )
 
 
 async def test_scan_archive_sorts_findings_by_severity_descending() -> None:

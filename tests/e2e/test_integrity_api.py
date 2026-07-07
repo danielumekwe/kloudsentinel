@@ -24,13 +24,14 @@ def settings(tmp_path: Path) -> Settings:
     """Overrides the conftest ``settings`` fixture (picked up automatically
     by every other fixture in this file that depends on it, e.g. ``client``)
     so remediation tests get a real, isolated quarantine directory instead
-    of the production default ``/var/sentinel/quarantine``."""
+    of the production default ``/var/lib/sentinel/quarantine``."""
     db_path = tmp_path / "test.db"
     return Settings(
         environment="test",
         database_url=f"sqlite+aiosqlite:///{db_path}",
         log_level="DEBUG",
         quarantine_root_directory=str(tmp_path / "quarantine"),
+        mode="manual",
     )
 
 
@@ -233,7 +234,10 @@ async def test_quarantine_finding_moves_file_out_of_account_home(
     assert body["remediation_state"] == "QUARANTINED"
     assert body["quarantine_path"] is not None
     assert not suspicious_file.exists()
-    assert Path(body["quarantine_path"]).is_file()
+    quarantine_dir = Path(body["quarantine_path"])
+    assert quarantine_dir.is_dir()
+    assert (quarantine_dir / "shell.php").is_file()
+    assert (quarantine_dir / "metadata.json").is_file()
 
 
 async def test_quarantine_deleted_finding_returns_409(

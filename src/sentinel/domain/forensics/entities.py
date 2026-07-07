@@ -30,3 +30,6 @@ class TempFileObservation(BaseEntity):
     process: ProcessContext | None
     account_id: UUID | None
     detected_at: datetime
+    file_permissions: str | None = None
+    mime_type: str | None = None
+    server_id: UUID | None = None

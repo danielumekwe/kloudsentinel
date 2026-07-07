@@ -29,11 +29,16 @@ _INI_SETTING_RE = re.compile(
     re.MULTILINE | re.IGNORECASE,
 )
 
-# wp-config.php: constants where presence of `true` is the bad state
+# wp-config.php: constants where presence of `true` is the bad state, plus
+# DISABLE_WP_CRON — not inherently a problem, but worth surfacing here so the
+# WordPress Security Engine's forensic scan can cross-reference it against
+# real system-crontab entries (a legitimately-disabled WP-Cron with no
+# replacement cron job means scheduled tasks are silently broken).
 _FLAGGED_WHEN_TRUE: dict[str, str] = {
     "WP_DEBUG": "Debug mode is enabled",
     "WP_DEBUG_LOG": "Debug logging is enabled",
     "WP_DEBUG_DISPLAY": "Debug output is displayed publicly",
+    "DISABLE_WP_CRON": "WP-Cron is disabled (cross-check for a replacement system cron job)",
 }
 
 # wp-config.php: constants where absence or `false` is the bad state

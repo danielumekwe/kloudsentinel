@@ -3,11 +3,14 @@ from __future__ import annotations
 from typing import Protocol
 
 from sentinel.domain.forensics.entities import TempFileObservation
+from sentinel.domain.forensics.value_objects import TempFileVerdict
 from sentinel.domain.shared.ports import Repository
 
 
 class TempFileObservationRepository(Repository[TempFileObservation], Protocol):
     async def get_by_path(self, absolute_path: str) -> TempFileObservation | None: ...
+
+    async def count_by_verdict(self, verdict: TempFileVerdict) -> int: ...
 
 
 class TempFileScanner(Protocol):

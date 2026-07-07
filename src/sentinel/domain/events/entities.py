@@ -32,6 +32,21 @@ class SecurityEvent(BaseEntity):
     occurred_at: datetime
     processed_at: datetime | None = None
 
+    # Forensic metadata, promoted to real columns (rather than left buried
+    # in ``payload``) because this is the data the future Security
+    # Intelligence Engine needs to filter/join/aggregate across millions of
+    # events — not every event is about a file, so all of these are
+    # optional rather than forcing a discriminated event schema.
+    server_id: UUID | None = None
+    file_path: str | None = None
+    sha256: str | None = None
+    file_size_bytes: int | None = None
+    file_owner: str | None = None
+    file_permissions: str | None = None
+    mime_type: str | None = None
+    scanner_version: str | None = None
+    detection_rule_id: str | None = None
+
     def mark_processed(self, *, at: datetime) -> None:
         self.processed_at = at
         self.touch()

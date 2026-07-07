@@ -4,7 +4,7 @@ import builtins
 import json
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sentinel.domain.events.entities import SecurityEvent
@@ -23,6 +23,15 @@ def _event_to_entity(model: SecurityEventModel) -> SecurityEvent:
         payload=json.loads(model.payload),
         occurred_at=ensure_utc(model.occurred_at),
         processed_at=ensure_utc(model.processed_at) if model.processed_at is not None else None,
+        server_id=model.server_id,
+        file_path=model.file_path,
+        sha256=model.sha256,
+        file_size_bytes=model.file_size_bytes,
+        file_owner=model.file_owner,
+        file_permissions=model.file_permissions,
+        mime_type=model.mime_type,
+        scanner_version=model.scanner_version,
+        detection_rule_id=model.detection_rule_id,
         created_at=ensure_utc(model.created_at),
         updated_at=ensure_utc(model.updated_at),
     )
@@ -38,6 +47,15 @@ def _event_to_model(entity: SecurityEvent) -> SecurityEventModel:
         payload=json.dumps(entity.payload),
         occurred_at=entity.occurred_at,
         processed_at=entity.processed_at,
+        server_id=entity.server_id,
+        file_path=entity.file_path,
+        sha256=entity.sha256,
+        file_size_bytes=entity.file_size_bytes,
+        file_owner=entity.file_owner,
+        file_permissions=entity.file_permissions,
+        mime_type=entity.mime_type,
+        scanner_version=entity.scanner_version,
+        detection_rule_id=entity.detection_rule_id,
         created_at=entity.created_at,
         updated_at=entity.updated_at,
     )
@@ -73,6 +91,29 @@ class SqlAlchemyEventRepository:
             select(SecurityEventModel)
             .where(SecurityEventModel.processed_at.is_(None))
             .order_by(SecurityEventModel.occurred_at.asc())
+            .limit(limit)
+        )
+        return [_event_to_entity(model) for model in result.scalars()]
+
+    async def count_total(self) -> int:
+        result = await self._session.execute(select(func.count()).select_from(SecurityEventModel))
+        return result.scalar_one()
+
+    async def count_unprocessed(self) -> int:
+        result = await self._session.execute(
+            select(func.count())
+            .select_from(SecurityEventModel)
+            .where(SecurityEventModel.processed_at.is_(None))
+        )
+        return result.scalar_one()
+
+    async def list_by_account(
+        self, account_id: UUID, *, limit: int = 200
+    ) -> builtins.list[SecurityEvent]:
+        result = await self._session.execute(
+            select(SecurityEventModel)
+            .where(SecurityEventModel.account_id == account_id)
+            .order_by(SecurityEventModel.occurred_at.desc())
             .limit(limit)
         )
         return [_event_to_entity(model) for model in result.scalars()]

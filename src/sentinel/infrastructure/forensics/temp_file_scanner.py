@@ -4,8 +4,8 @@ import hashlib
 import os
 import pwd
 from pathlib import Path
-from uuid import UUID
 
+from sentinel.domain.discovery.entities import CpanelAccount
 from sentinel.domain.discovery.ports import CpanelAccountRepository
 from sentinel.domain.discovery.value_objects import LinuxUsername
 from sentinel.domain.forensics.entities import TempFileObservation
@@ -15,6 +15,7 @@ from sentinel.domain.shared.entity import utcnow
 from sentinel.domain.shared.exceptions import ValidationError
 from sentinel.domain.shared.value_objects import AbsoluteFilePath, Severity, Sha256Hash
 from sentinel.infrastructure.heuristics.php_malware_scanner import PhpMalwareScanner
+from sentinel.infrastructure.mime import guess_mime_type
 
 _HASH_CHUNK_SIZE = 65_536
 _PROC_ROOT = Path("/proc")
@@ -74,13 +75,16 @@ class FilesystemTempFileScanner:
             sha256 = Sha256Hash(value=_sha256_of(path))
             size_bytes = stat.st_size
             owner = _owner_of(stat.st_uid)
+            file_permissions = format(stat.st_mode & 0o777, "03o")
         except OSError:
             sha256 = None
             size_bytes = 0
             owner = "unknown"
+            file_permissions = None
 
         matches = await self._php_malware_scanner.scan_file(path)
         verdict, reason = _classify(matches)
+        account = await self._resolve_account(owner)
 
         return TempFileObservation(
             absolute_path=AbsoluteFilePath(value=str(path)),
@@ -91,17 +95,19 @@ class FilesystemTempFileScanner:
             verdict_reason=reason,
             matched_rule_ids=tuple(match.rule_id for match in matches),
             process=_process_context_for(path),
-            account_id=await self._resolve_account_id(owner),
+            account_id=account.id if account is not None else None,
             detected_at=now,
+            file_permissions=file_permissions,
+            mime_type=guess_mime_type(path.name),
+            server_id=account.server_id if account is not None else None,
         )
 
-    async def _resolve_account_id(self, owner: str) -> UUID | None:
+    async def _resolve_account(self, owner: str) -> CpanelAccount | None:
         try:
             username = LinuxUsername(value=owner)
         except ValidationError:
             return None
-        account = await self._accounts.get_by_username(username)
-        return account.id if account is not None else None
+        return await self._accounts.get_by_username(username)
 
 
 def _classify(matches: list[HeuristicMatch]) -> tuple[TempFileVerdict, str]:

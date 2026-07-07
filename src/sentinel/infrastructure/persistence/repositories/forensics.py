@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sentinel.domain.forensics.entities import TempFileObservation
@@ -55,6 +55,9 @@ def _observation_to_entity(model: TempFileObservationModel) -> TempFileObservati
         process=_process_from_json(model.process_context),
         account_id=model.account_id,
         detected_at=ensure_utc(model.detected_at),
+        file_permissions=model.file_permissions,
+        mime_type=model.mime_type,
+        server_id=model.server_id,
         created_at=ensure_utc(model.created_at),
         updated_at=ensure_utc(model.updated_at),
     )
@@ -73,6 +76,9 @@ def _observation_to_model(entity: TempFileObservation) -> TempFileObservationMod
         process_context=_process_to_json(entity.process),
         account_id=entity.account_id,
         detected_at=entity.detected_at,
+        file_permissions=entity.file_permissions,
+        mime_type=entity.mime_type,
+        server_id=entity.server_id,
         created_at=entity.created_at,
         updated_at=entity.updated_at,
     )
@@ -111,3 +117,11 @@ class SqlAlchemyTempFileObservationRepository:
         )
         model = result.scalar_one_or_none()
         return _observation_to_entity(model) if model is not None else None
+
+    async def count_by_verdict(self, verdict: TempFileVerdict) -> int:
+        result = await self._session.execute(
+            select(func.count())
+            .select_from(TempFileObservationModel)
+            .where(TempFileObservationModel.verdict == verdict.value)
+        )
+        return result.scalar_one()

@@ -56,6 +56,7 @@ class WordPressInstallation(BaseEntity):
     is_multisite: bool
     last_seen_at: datetime
     is_active: bool = True
+    php_version: str | None = None
 
     def mark_seen(
         self,
@@ -64,12 +65,14 @@ class WordPressInstallation(BaseEntity):
         wp_version: str | None,
         is_multisite: bool,
         at: datetime,
+        php_version: str | None = None,
     ) -> None:
         self.domain = domain
         self.wp_version = wp_version
         self.is_multisite = is_multisite
         self.last_seen_at = at
         self.is_active = True
+        self.php_version = php_version
         self.touch()
 
     def mark_inactive(self) -> None:

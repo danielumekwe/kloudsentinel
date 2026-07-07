@@ -142,6 +142,7 @@ def _installation_to_entity(model: WordPressInstallationModel) -> WordPressInsta
         is_multisite=model.is_multisite,
         is_active=model.is_active,
         last_seen_at=model.last_seen_at,
+        php_version=model.php_version,
         created_at=model.created_at,
         updated_at=model.updated_at,
     )
@@ -157,6 +158,7 @@ def _installation_to_model(entity: WordPressInstallation) -> WordPressInstallati
         is_multisite=entity.is_multisite,
         is_active=entity.is_active,
         last_seen_at=entity.last_seen_at,
+        php_version=entity.php_version,
         created_at=entity.created_at,
         updated_at=entity.updated_at,
     )

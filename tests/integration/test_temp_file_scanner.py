@@ -91,15 +91,16 @@ async def test_resolve_account_id_matches_known_username(tmp_path: Path) -> None
     account = _account("examplebob")
     scanner = _scanner(tmp_path, accounts=[account])
 
-    resolved = await scanner._resolve_account_id("examplebob")
+    resolved = await scanner._resolve_account("examplebob")
 
-    assert resolved == account.id
+    assert resolved is not None
+    assert resolved.id == account.id
 
 
 async def test_resolve_account_id_returns_none_for_unknown_username(tmp_path: Path) -> None:
     scanner = _scanner(tmp_path)
 
-    resolved = await scanner._resolve_account_id("examplebob")
+    resolved = await scanner._resolve_account("examplebob")
 
     assert resolved is None
 
@@ -110,7 +111,7 @@ async def test_resolve_account_id_returns_none_for_invalid_username_shape(tmp_pa
     as "no matching account" rather than raising."""
     scanner = _scanner(tmp_path)
 
-    resolved = await scanner._resolve_account_id("www-data")
+    resolved = await scanner._resolve_account("www-data")
 
     assert resolved is None
 

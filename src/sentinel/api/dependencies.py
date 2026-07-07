@@ -34,6 +34,9 @@ from sentinel.application.inventory.queries import (
     ListInstalledThemesQuery,
 )
 from sentinel.application.monitoring.queries import ListConfigurationItemsQuery
+from sentinel.application.wordpress.integrity.checksum_use_cases import VerifyCoreChecksumsUseCase
+from sentinel.application.wordpress.intelligence.queries import GetWordPressIncidentReportQuery
+from sentinel.application.wordpress.inventory.queries import GetWordPressInventoryQuery
 from sentinel.config import Settings
 from sentinel.infrastructure.filesystem.file_remediator import FilesystemFileRemediator
 from sentinel.infrastructure.persistence.database import Database
@@ -49,6 +52,7 @@ from sentinel.infrastructure.persistence.repositories.integrity import (
     SqlAlchemyRemediationActionRepository,
 )
 from sentinel.infrastructure.persistence.repositories.intelligence import (
+    SqlAlchemyIncidentAccountLinkRepository,
     SqlAlchemyIncidentRepository,
     SqlAlchemyThreatTimelineEntryRepository,
 )
@@ -59,6 +63,10 @@ from sentinel.infrastructure.persistence.repositories.inventory import (
 from sentinel.infrastructure.persistence.repositories.monitoring import (
     SqlAlchemyConfigurationItemRepository,
 )
+from sentinel.infrastructure.persistence.repositories.wordpress_integrity import (
+    SqlAlchemyCoreChecksumRepository,
+)
+from sentinel.infrastructure.wordpress.core_checksums import WordPressOrgChecksumsClient
 
 
 def get_database(request: Request) -> Database:
@@ -120,6 +128,24 @@ async def require_api_key(
 
 
 RequireApiKey = Annotated[ApiKeyModel, Depends(require_api_key)]
+
+
+def require_mutations_allowed(settings: AppSettings) -> None:
+    """Guards every mutation-capable endpoint (quarantine/restore/delete).
+    Blocks nothing about detection or scanning — those are read-only and run
+    regardless of ``mode`` — this only stops Sentinel from touching the host
+    filesystem when ``SENTINEL_MODE=observe`` (the default)."""
+    if settings.mode == "observe":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Sentinel is running in observe mode (SENTINEL_MODE=observe); "
+                "remediation endpoints are disabled."
+            ),
+        )
+
+
+RequireMutationsAllowed = Annotated[None, Depends(require_mutations_allowed)]
 
 
 def get_list_cpanel_accounts_query(session: DbSession) -> ListCpanelAccountsQuery:
@@ -257,4 +283,51 @@ ListIncidentTimeline = Annotated[
 ]
 ListIncidentEvidence = Annotated[
     ListIncidentEvidenceQuery, Depends(get_list_incident_evidence_query)
+]
+
+
+def get_wordpress_inventory_query(
+    session: DbSession, settings: AppSettings
+) -> GetWordPressInventoryQuery:
+    return GetWordPressInventoryQuery(
+        installation_repository=SqlAlchemyWordPressInstallationRepository(session),
+        baseline_repository=SqlAlchemyFileBaselineRepository(session),
+        dropin_relative_paths=settings.wordpress_dropin_relative_paths,
+    )
+
+
+def get_verify_wordpress_core_checksums_use_case(
+    session: DbSession, settings: AppSettings
+) -> VerifyCoreChecksumsUseCase:
+    return VerifyCoreChecksumsUseCase(
+        installation_repository=SqlAlchemyWordPressInstallationRepository(session),
+        baseline_repository=SqlAlchemyFileBaselineRepository(session),
+        checksum_repository=SqlAlchemyCoreChecksumRepository(session),
+        checksums_client=WordPressOrgChecksumsClient(
+            base_url=settings.wordpress_core_checksums_api_base_url,
+            locale=settings.wordpress_core_checksums_locale,
+        ),
+        critical_relative_paths=settings.wordpress_critical_relative_paths,
+    )
+
+
+def get_wordpress_incident_report_query(session: DbSession) -> GetWordPressIncidentReportQuery:
+    return GetWordPressIncidentReportQuery(
+        incident_repository=SqlAlchemyIncidentRepository(session),
+        link_repository=SqlAlchemyIncidentAccountLinkRepository(session),
+        installation_repository=SqlAlchemyWordPressInstallationRepository(session),
+        plugin_repository=SqlAlchemyInstalledPluginRepository(session),
+        theme_repository=SqlAlchemyInstalledThemeRepository(session),
+        event_repository=SqlAlchemyEventRepository(session),
+    )
+
+
+GetWordPressInventory = Annotated[
+    GetWordPressInventoryQuery, Depends(get_wordpress_inventory_query)
+]
+VerifyWordPressCoreChecksums = Annotated[
+    VerifyCoreChecksumsUseCase, Depends(get_verify_wordpress_core_checksums_use_case)
+]
+GetWordPressIncidentReport = Annotated[
+    GetWordPressIncidentReportQuery, Depends(get_wordpress_incident_report_query)
 ]

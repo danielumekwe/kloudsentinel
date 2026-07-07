@@ -42,6 +42,7 @@ class WordPressInstallationResponse(BaseModel):
     absolute_path: str
     domain: str | None
     wp_version: str | None
+    php_version: str | None
     is_multisite: bool
     is_active: bool
     last_seen_at: datetime
@@ -56,6 +57,7 @@ class WordPressInstallationResponse(BaseModel):
             absolute_path=str(entity.absolute_path),
             domain=str(entity.domain) if entity.domain is not None else None,
             wp_version=entity.wp_version,
+            php_version=entity.php_version,
             is_multisite=entity.is_multisite,
             is_active=entity.is_active,
             last_seen_at=entity.last_seen_at,

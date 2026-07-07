@@ -78,11 +78,27 @@ def test_wordpress_installation_mark_seen_and_mark_inactive() -> None:
         is_active=False,
     )
 
-    installation.mark_seen(domain=None, wp_version="6.5", is_multisite=True, at=utcnow())
+    installation.mark_seen(
+        domain=None, wp_version="6.5", is_multisite=True, at=utcnow(), php_version="8.1"
+    )
     assert installation.is_active is True
     assert installation.wp_version == "6.5"
     assert installation.is_multisite is True
     assert installation.domain is None
+    assert installation.php_version == "8.1"
 
     installation.mark_inactive()
     assert installation.is_active is False
+
+
+def test_wordpress_installation_php_version_defaults_to_none() -> None:
+    installation = WordPressInstallation(
+        cpanel_account_id=uuid4(),
+        absolute_path=AbsoluteFilePath(value="/home/examplebob1/public_html"),
+        domain=None,
+        wp_version="6.4",
+        is_multisite=False,
+        last_seen_at=utcnow(),
+    )
+
+    assert installation.php_version is None

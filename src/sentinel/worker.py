@@ -10,6 +10,7 @@ from sentinel.config import get_settings
 from sentinel.infrastructure.persistence.database import Database
 from sentinel.infrastructure.scheduler.apscheduler_adapter import SchedulerAdapter
 from sentinel.infrastructure.scheduler.job_registry import register_jobs
+from sentinel.infrastructure.validation import has_critical_failures, run_all_checks
 
 logger = structlog.get_logger()
 
@@ -17,6 +18,18 @@ logger = structlog.get_logger()
 async def main() -> None:
     settings = get_settings()
     configure_logging(settings)
+
+    results = await run_all_checks(settings)
+    for result in results:
+        log_method = {"PASS": logger.info, "WARN": logger.warning, "FAIL": logger.error}[
+            result.status
+        ]
+        log_method("startup_check", name=result.name, status=result.status, detail=result.detail)
+    if has_critical_failures(results):
+        logger.error("sentinel_worker_startup_aborted")
+        raise RuntimeError(
+            "Sentinel worker failed startup validation — see startup_check log lines above"
+        )
 
     database = Database(settings)
     scheduler = SchedulerAdapter()
