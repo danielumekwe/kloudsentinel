@@ -17,14 +17,39 @@ services:
     image: sentinel-core:local
     command: ["api"]
     restart: unless-stopped
+    # Real cPanel account files are owned by each account's own individual
+    # system UID, not a shared one — the image's default `sentinel` (uid
+    # 1000) can't quarantine/restore/delete them. Root is how comparable
+    # host agents (Imunify360, ClamAV, CSF) operate on cPanel boxes. See
+    # docs/architecture/decisions/0001-v1-deployment-privilege-and-mode.md.
+    user: root
     ports:
       - "8443:8443"
     environment:
       SENTINEL_ENVIRONMENT: production
       SENTINEL_LOG_LEVEL: INFO
       SENTINEL_DATABASE_URL: sqlite+aiosqlite:////data/sentinel.db
+      # v1 default: auto-quarantine is live (CRITICAL findings only, capped
+      # per account per run by auto_quarantine_max_per_account_per_run).
+      # To roll back, set to "manual" (remediation stays human-triggered
+      # only) or "observe" (every mutation endpoint returns 403) and
+      # restart — takes effect immediately, no code change, and quarantine
+      # is always reversible via `sentinel restore`.
+      SENTINEL_MODE: active
+      # Persists quarantined files on the sentinel-data volume (below)
+      # instead of the container's ephemeral writable layer.
+      SENTINEL_QUARANTINE_ROOT_DIRECTORY: /data/quarantine
+      # Must match worker's mount path below — quarantine/restore resolve
+      # account.home_directory values that were recorded using this exact
+      # container path, not the host's real path.
+      SENTINEL_CPANEL_HOME_BASE_DIRECTORY: /host/home
     volumes:
       - sentinel-data:/data
+      # Read-write: quarantine/restore/delete only ever touch paths under
+      # an account's home directory. No other host mount is needed here —
+      # discovery/forensics (which read /etc, /proc, /var/log, cpanel
+      # binaries, temp dirs) only run in the worker service.
+      - /home:/host/home:rw
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -41,18 +66,35 @@ services:
     image: sentinel-core:local
     command: ["worker"]
     restart: unless-stopped
+    # See the api service above: real account files are owned by
+    # per-account system UIDs, so quarantine needs root, not uid 1000.
+    user: root
     environment:
       SENTINEL_ENVIRONMENT: production
       SENTINEL_LOG_LEVEL: INFO
       SENTINEL_DATABASE_URL: sqlite+aiosqlite:////data/sentinel.db
+      SENTINEL_MODE: active
+      SENTINEL_QUARANTINE_ROOT_DIRECTORY: /data/quarantine
+      SENTINEL_CPANEL_ETC_DIRECTORY: /host/etc
+      SENTINEL_CPANEL_HOME_BASE_DIRECTORY: /host/home
+      SENTINEL_PROC_DIRECTORY: /host/proc
+      SENTINEL_VAR_LOG_DIRECTORY: /host/var/log
+      SENTINEL_CPANEL_BINARIES_DIRECTORY: /host/usr/local/cpanel
+      SENTINEL_FORENSICS_TEMP_DIRECTORIES: '["/host/tmp","/host/var_tmp","/host/dev_shm"]'
     volumes:
       - sentinel-data:/data
-      # Production host mounts (read-only) — enable on a real cPanel server:
-      # - /etc:/host/etc:ro
-      # - /home:/host/home:ro
-      # - /proc:/host/proc:ro
-      # - /var/log:/host/var/log:ro
-      # - /usr/local/cpanel:/host/usr/local/cpanel:ro
+      # Only /home needs write access — quarantine (manual and automatic)
+      # only ever moves files out of an account's home directory. Discovery
+      # and forensics never write, so /etc, /proc, /var/log, cpanel
+      # binaries, and the temp dirs stay read-only.
+      - /etc:/host/etc:ro
+      - /home:/host/home:rw
+      - /proc:/host/proc:ro
+      - /var/log:/host/var/log:ro
+      - /usr/local/cpanel:/host/usr/local/cpanel:ro
+      - /tmp:/host/tmp:ro
+      - /var/tmp:/host/var_tmp:ro
+      - /dev/shm:/host/dev_shm:ro
     depends_on:
       migrate:
         condition: service_completed_successfully

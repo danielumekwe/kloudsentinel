@@ -1,0 +1,27 @@
+[Unit]
+Description=Sentinel Core Worker (scheduled scans, forensics, auto-quarantine)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=__SENTINEL_HOME__
+EnvironmentFile=/etc/sentinel/sentinel.env
+ExecStart=__SENTINEL_HOME__/.venv/bin/python -m sentinel.worker
+Restart=on-failure
+RestartSec=5
+
+# Deliberately no PrivateTmp=, ProtectHome=, ProtectSystem=, or
+# DynamicUser= here. Every one of them would silently break Sentinel:
+# PrivateTmp gives this unit a private, empty /tmp while forensics
+# monitoring watches the real one; ProtectHome/ProtectSystem=strict block
+# the account-home read/write access quarantine needs; DynamicUser
+# conflicts with running as a fixed root user (required — see
+# docs/architecture/decisions/0001-v1-deployment-privilege-and-mode.md).
+# Do not add systemd sandboxing directives to this unit without reading
+# that ADR first.
+
+[Install]
+WantedBy=multi-user.target
